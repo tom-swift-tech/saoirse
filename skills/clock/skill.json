@@ -1,0 +1,11 @@
+{
+  "name": "clock",
+  "description": "Get the current date and time on Tom's machine. Call this whenever the user asks what time or date it is.",
+  "entry": "run.mjs",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "required": []
+  },
+  "timeoutMs": 10000
+}

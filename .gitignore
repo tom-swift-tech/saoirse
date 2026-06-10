@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.engram
+*.engram-shm
+*.engram-wal
+.env
+.env.local
+*.log
+
+# Accreted tool-builder artifacts — sandboxed, un-promoted, runtime-only.
+sandbox/
