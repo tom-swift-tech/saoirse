@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@mariozechner/pi-tui": "^0.73.1",
-    "engram": "git+https://github.com/tom-swift-tech/engram.git#0bf16af67a700bb4e42193b09992577ad2879a83",
+    "engram": "git+https://github.com/tom-swift-tech/engram.git#e1b9e82a83c5d6e7182d9bd40655dc70e160c383",
     "nats": "^2.29.3",
     "ws": "^8.16.0"
   },
