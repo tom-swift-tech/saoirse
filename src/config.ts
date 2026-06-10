@@ -17,7 +17,7 @@ export interface SaoirseConfig {
   token: string | undefined;
   /** Engram memory database path. */
   engramDb: string;
-  /** How Engram embeds: production local model, Ollama, or offline dev hashing. */
+  /** How Engram embeds: Ollama (default), offline dev hashing, or opt-in local model. */
   engramEmbeddings: EmbeddingMode;
   /** pi launcher for tool-building (PI_COMMAND). Undefined => tool building disabled. */
   piCommand: string | undefined;
@@ -52,7 +52,10 @@ export function loadConfig(
   };
 }
 
+// Default is ollama: boot-safe (an unreachable endpoint degrades per-message,
+// never kills the daemon) and avoids the vulnerable transformers chain that
+// 'local' pulls in. 'local' is deliberate opt-in.
 function parseEmbeddingMode(value: string | undefined): EmbeddingMode {
-  if (value === 'ollama' || value === 'offline') return value;
-  return 'local';
+  if (value === 'local' || value === 'offline') return value;
+  return 'ollama';
 }

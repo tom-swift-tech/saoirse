@@ -2,9 +2,11 @@
 // engram-factory.ts — Composition seam for building the pinned Engram.
 //
 // The core is provider-agnostic; this is where the daemon chooses how Engram
-// embeds. Production uses Engram's local model. Offline/dev boot uses a
-// deterministic network-free embedder so the daemon breathes without a model
-// download or network. Ollama embeddings are available for a self-hosted box.
+// embeds. Default is Ollama (boot-safe: an unreachable endpoint fails
+// per-message, never at create). Offline/dev boot uses a deterministic
+// network-free embedder so the daemon breathes without a model download or
+// network. Engram's in-process local model is deliberate opt-in — it imports
+// the deprecated transformers chain and a failed download kills boot.
 // =============================================================================
 
 import { Engram } from 'engram';
