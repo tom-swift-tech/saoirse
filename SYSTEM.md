@@ -45,6 +45,12 @@ Saoirse would reason confidently from damaged recall with no error to catch.
   proposal to the Director → explicit approval → re-pin + deliberate restart.
 - A failed test suite means the proposal is discarded; she keeps running on the
   known-good commit and reports what she tried.
+- IMPLEMENTED (gate half): the evaluate-and-repin path — `POST /engram/evaluate`
+  clones a candidate ref to a sandbox, runs Engram's own suite, and queues a
+  Tier-0 proposal only when it clears the acceptance gate (zero failures AND ≥
+  baseline count); token-gated approval rewrites the `package.json` pin and
+  nothing else (no install, no restart). Authoring Engram changes (pi-on-Engram)
+  is the remaining half — it feeds candidate refs into this same gate.
 
 ### Tier 1 — Her own tools/skills (capabilities she builds). MEDIUM GATE.
 - Saoirse MAY build and test new tools in-session (via pi, invoked as a tool).

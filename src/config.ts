@@ -29,6 +29,14 @@ export interface SaoirseConfig {
   natsUrl: string | undefined;
   /** Subject prefix on the fabric (NATS_PREFIX), e.g. "saoirse.message". */
   natsPrefix: string;
+  /** Sandbox root for Tier-0 Engram candidate clones (ENGRAM_EVAL_SANDBOX). */
+  engramEvalSandbox: string;
+  /** Ceiling on one clone+install+test cycle, ms (ENGRAM_EVAL_TIMEOUT_MS). */
+  engramEvalTimeoutMs: number;
+  /** Known-good Engram test-count floor a candidate must meet (ENGRAM_BASELINE_TESTS). */
+  engramBaselineTests: number;
+  /** Optional override of the Engram clone source; default parsed from the pin (ENGRAM_REPO). */
+  engramRepo: string | undefined;
 }
 
 export type EmbeddingMode = 'local' | 'ollama' | 'offline';
@@ -49,6 +57,11 @@ export function loadConfig(
     piTimeoutMs: parseInt(env.PI_TIMEOUT_MS ?? '600000', 10) || 600_000,
     natsUrl: env.NATS_URL || undefined,
     natsPrefix: env.NATS_PREFIX ?? 'saoirse',
+    engramEvalSandbox: env.ENGRAM_EVAL_SANDBOX ?? './engram-eval',
+    engramEvalTimeoutMs:
+      parseInt(env.ENGRAM_EVAL_TIMEOUT_MS ?? '900000', 10) || 900_000,
+    engramBaselineTests: parseInt(env.ENGRAM_BASELINE_TESTS ?? '334', 10) || 334,
+    engramRepo: env.ENGRAM_REPO || undefined,
   };
 }
 

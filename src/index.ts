@@ -17,9 +17,16 @@ import { createEngram } from './core/engram-factory.js';
 import { EngramMemory } from './core/memory.js';
 import { OpenAICompatibleGateway } from './core/openai-compatible-gateway.js';
 import { PiToolBuilder } from './core/pi-tool-builder.js';
+import { GitEngramEvaluator } from './core/engram-evaluator.js';
 import { loadSkills } from './core/skills.js';
 import { ProcessSkillRunner } from './core/skill-runner.js';
-import { SaoirseCore, type SkillKit, type ToolKit } from './core/saoirse.js';
+import {
+  SaoirseCore,
+  type EngramKit,
+  type SkillKit,
+  type ToolKit,
+} from './core/saoirse.js';
+import { parseEngramPin } from './proposals.js';
 import { createRouter } from './channels/http.js';
 import { attachWebSocket } from './channels/ws.js';
 import { attachNats, type NatsChannel } from './channels/nats.js';
@@ -27,13 +34,16 @@ import { attachNats, type NatsChannel } from './channels/nats.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const proposalsDir = join(__dirname, '..', 'proposals');
 const skillsDir = join(__dirname, '..', 'skills');
+const packageJsonPath = join(__dirname, '..', 'package.json');
 
-function readVersion(): string {
+function readPackageJson(): {
+  version?: string;
+  dependencies?: Record<string, string>;
+} {
   try {
-    const pkg = readFileSync(join(__dirname, '..', 'package.json'), 'utf8');
-    return (JSON.parse(pkg) as { version?: string }).version ?? '0.0.0';
+    return JSON.parse(readFileSync(packageJsonPath, 'utf8'));
   } catch {
-    return '0.0.0';
+    return {};
   }
 }
 
@@ -96,15 +106,46 @@ async function main(): Promise<void> {
     runner: new ProcessSkillRunner(),
   };
 
-  const core = new SaoirseCore(memory, gateway, toolKit, skillKit);
+  // Tier-0 Engram evaluator: the pin in package.json is the single source of
+  // truth for what the daemon runs on. We parse it to learn the clone source and
+  // the current SHA; the kit can evaluate + propose, never re-pin. A malformed
+  // pin disables Tier-0 (loudly) rather than crashing boot.
+  const pkg = readPackageJson();
+  let engramKit: EngramKit | undefined;
+  let engramTier0Note = 'disabled (no parseable engram pin)';
+  try {
+    const pin = parseEngramPin(pkg.dependencies?.engram ?? '');
+    const evaluator = new GitEngramEvaluator({
+      repoUrl: config.engramRepo ?? pin.repoUrl,
+      sandboxRoot: resolve(config.engramEvalSandbox),
+      currentSha: pin.sha,
+      baselineTestCount: config.engramBaselineTests,
+      timeoutMs: config.engramEvalTimeoutMs,
+    });
+    engramKit = {
+      evaluator,
+      proposalsDir,
+      currentSha: pin.sha,
+      baselineTestCount: config.engramBaselineTests,
+    };
+    engramTier0Note = `evaluate-and-repin (pinned ${pin.sha.slice(0, 7)}, baseline ${config.engramBaselineTests})`;
+  } catch (err) {
+    console.warn(
+      `[saoirse] Tier-0 Engram evaluation disabled: ${(err as Error).message}`,
+    );
+  }
 
-  const version = readVersion();
+  const core = new SaoirseCore(memory, gateway, toolKit, skillKit, engramKit);
+
+  const version = pkg.version ?? '0.0.0';
   const server = http.createServer(
     createRouter({
       core,
       proposalsDir,
       skillsDir,
       sandboxDir,
+      packageJsonPath,
+      engramEvalSandbox: resolve(config.engramEvalSandbox),
       token: config.token,
       status: async () => ({
         model: {
@@ -179,6 +220,7 @@ async function main(): Promise<void> {
         toolKit ? `pi (sandbox ${sandboxDir})` : 'disabled (PI_COMMAND unset)'
       }  — promotion is token-gated`,
     );
+    console.log(`[saoirse] engram tier-0: ${engramTier0Note}  — re-pin is token-gated`);
     console.log(
       `[saoirse] skills: ${
         skillKit.skills.length

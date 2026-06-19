@@ -18,7 +18,7 @@ end-to-end against a local model endpoint.
 ```
 cp .env.example .env          # set SAOIRSE_TOKEN; point MODEL_ENDPOINT at an OpenAI-compatible server
 npm install                   # Node 20 ONLY — shares an ABI-sensitive native dep with Engram
-npm test                      # 21 tests, green
+npm test                      # 129 tests, green
 npm run dev                   # or: npm run build && npm start
 curl -X POST localhost:8787/message -d '{"text":"what'\''s new"}'
 ```
@@ -141,6 +141,34 @@ saoirse reject  <id>                                    # discard the sandbox ar
 `build`, `approve`, and `reject` are privileged (require `SAOIRSE_TOKEN`).
 Promoted tools load on the next daemon start — the running process is never
 mutated by a build or an approval.
+
+## Re-pinning Engram (Tier 0 — highest gate)
+
+The memory engine is pinned to one Engram commit (`package.json`). Saoirse can
+**evaluate** a candidate Engram git ref — clone it into a sandbox
+(`ENGRAM_EVAL_SANDBOX`), run Engram's **own** test suite, and, only if it clears
+the acceptance gate (zero failures AND at least `ENGRAM_BASELINE_TESTS`, default
+334), queue a Tier-0 proposal. Approval rewrites the `engram` pin in
+`package.json` — and nothing else. It does **not** run `npm install` and does
+**not** restart: the live daemon keeps importing the old Engram from
+`node_modules` until a deliberate reinstall + restart, so a re-pin can never
+mutate the running memory engine (SYSTEM.md Tier 0). Authoring Engram changes is
+out of scope here — this is the evaluate-and-promote gate that a candidate ref
+flows through.
+
+```
+POST /engram/evaluate { "ref": "<sha|tag|branch>" }   # TOKEN — clone, test, propose
+saoirse proposals                                      # the queued tier-0 proposal
+saoirse approve <id>                                   # TOKEN — re-pin package.json
+saoirse reject  <id>                                   # TOKEN — discard the clone
+# then, deliberately, by a human/operator:
+npm install && <restart the daemon>                    # Node 20 — load the new Engram
+```
+
+The re-pin **refuses** if `package.json`'s current pin drifted from the SHA the
+candidate was evaluated against — the evaluation must describe the re-pin it
+authorizes. Approve/reject share the proposals routes with Tier 1; the daemon
+dispatches by the proposal's recorded tier.
 
 ## Committed skills (how a promoted tool runs)
 

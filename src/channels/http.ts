@@ -10,15 +10,20 @@
 //   GET  /proposals                           -> { count, proposals } (open, read-only)
 //   GET  /health                              -> { status }           (open)
 //   POST /build                     { name, description, test? }      (TOKEN)
-//   POST /proposals/:id/approve     -> promote sandbox -> skills/      (TOKEN — the gate)
-//   POST /proposals/:id/reject      -> discard sandbox artifact        (TOKEN)
+//   POST /engram/evaluate           { ref }  -> Tier-0 eval + proposal (TOKEN)
+//   POST /proposals/:id/approve     -> tier 1: promote -> skills/;     (TOKEN — the gate)
+//                                      tier 0: re-pin engram in package.json
+//   POST /proposals/:id/reject      -> discard the sandbox/clone        (TOKEN)
 // =============================================================================
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { SaoirseCore } from '../core/saoirse.js';
 import {
+  approveEngramProposal,
   approveProposal,
   readProposals,
+  readProposalTier,
+  rejectEngramProposal,
   rejectProposal,
 } from '../proposals.js';
 
@@ -36,6 +41,10 @@ export interface HttpDeps {
   skillsDir: string;
   /** Sandbox root for accreted, un-promoted artifacts. */
   sandboxDir: string;
+  /** package.json whose engram pin the Tier-0 gate rewrites (the ONLY writer). */
+  packageJsonPath: string;
+  /** Sandbox root for Tier-0 Engram candidate clones. */
+  engramEvalSandbox: string;
   /** Privileged-action token (same as WS). Undefined => privileged routes fail closed. */
   token: string | undefined;
   /** Status provider (model name/endpoint/reachability + version). Built in index.ts. */
@@ -113,18 +122,50 @@ export function createRouter(deps: HttpDeps): Router {
         return send(res, 200, outcome);
       }
 
+      if (method === 'POST' && path === '/engram/evaluate') {
+        if (!authorized(req, deps.token)) return unauthorized(res);
+        if (!deps.core.canEvaluateEngram) {
+          return send(res, 503, {
+            error: 'engram evaluation is not configured',
+          });
+        }
+        const body = (await readJsonBody(req)) as { ref?: unknown };
+        if (typeof body.ref !== 'string' || body.ref.trim() === '') {
+          return send(res, 400, { error: 'body must include non-empty "ref"' });
+        }
+        const outcome = await deps.core.handleEngramEvalRequest(body.ref.trim());
+        return send(res, outcome.ok ? 200 : 422, outcome);
+      }
+
       const promote = PROMOTE_RE.exec(path);
       if (method === 'POST' && promote) {
         if (!authorized(req, deps.token)) return unauthorized(res);
         const [, id, action] = promote;
         try {
+          // One route, two gates: dispatch on the proposal's governance tier.
+          const tier = await readProposalTier(deps.proposalsDir, id);
           if (action === 'approve') {
+            if (tier === 0) {
+              const result = await approveEngramProposal(id, {
+                proposalsDir: deps.proposalsDir,
+                packageJsonPath: deps.packageJsonPath,
+                evalSandboxRoot: deps.engramEvalSandbox,
+              });
+              return send(res, 200, { repinned: result.candidateSha, ...result });
+            }
             const result = await approveProposal(id, {
               proposalsDir: deps.proposalsDir,
               skillsDir: deps.skillsDir,
               sandboxRoot: deps.sandboxDir,
             });
             return send(res, 200, { promoted: result.toolName, ...result });
+          }
+          if (tier === 0) {
+            const result = await rejectEngramProposal(id, {
+              proposalsDir: deps.proposalsDir,
+              evalSandboxRoot: deps.engramEvalSandbox,
+            });
+            return send(res, 200, { rejected: result.id });
           }
           const result = await rejectProposal(id, {
             proposalsDir: deps.proposalsDir,

@@ -21,10 +21,15 @@ import type {
   ToolCallRequest,
 } from './model-gateway.js';
 import type { BuildResult, ToolBuilder, ToolSpec } from './tool-builder.js';
+import type { EngramEvaluator } from './engram-evaluator.js';
 import type { LoadedSkill } from './skills.js';
 import { toToolDefinition } from './skills.js';
 import type { SkillRunner } from './skill-runner.js';
-import { writeProposal, type ToolProposalRecord } from '../proposals.js';
+import {
+  writeProposal,
+  type EngramProposalRecord,
+  type ToolProposalRecord,
+} from '../proposals.js';
 
 const SYSTEM_PROMPT =
   'You are Saoirse, a single persistent personal AI assistant for Tom Swift, ' +
@@ -75,12 +80,37 @@ export type BuildOutcome =
   | { ok: true; proposalId: string; status: 'pending'; toolName: string }
   | { ok: false; error: string };
 
+/**
+ * Tier-0 Engram evaluation wiring. Carries proposalsDir but NOT a path to
+ * package.json: the core can evaluate a candidate and enqueue a proposal, never
+ * re-pin. Re-pinning is the separate, token-gated approveEngramProposal.
+ */
+export interface EngramKit {
+  evaluator: EngramEvaluator;
+  proposalsDir: string;
+  /** The SHA the daemon is pinned to right now — captured in every proposal. */
+  currentSha: string;
+  /** Known-good test-count floor a candidate must meet to be proposed. */
+  baselineTestCount: number;
+}
+
+export type EngramEvalOutcome =
+  | {
+      ok: true;
+      proposalId: string;
+      status: 'pending';
+      candidateSha: string;
+      currentSha: string;
+    }
+  | { ok: false; error: string };
+
 export class SaoirseCore {
   constructor(
     private readonly memory: Memory,
     private readonly gateway: ModelGateway,
     private readonly toolKit?: ToolKit,
     private readonly skillKit?: SkillKit,
+    private readonly engramKit?: EngramKit,
   ) {}
 
   /** Names of the committed skills the model can call this run. */
@@ -230,6 +260,59 @@ export class SaoirseCore {
       proposalId: record.id,
       status: 'pending',
       toolName: record.toolName,
+    };
+  }
+
+  /** Whether Tier-0 Engram evaluation is configured. */
+  get canEvaluateEngram(): boolean {
+    return this.engramKit !== undefined;
+  }
+
+  /**
+   * EVALUATE an Engram candidate ref (Tier 0): the evaluator clones and runs
+   * Engram's OWN suite in a sandbox, and this writes a PENDING proposal iff the
+   * candidate cleared the acceptance gate. It NEVER re-pins — no package.json
+   * write exists on this path. A failed/rejected candidate is logged (never
+   * swallowed) and leaves the running daemon entirely unchanged.
+   */
+  async handleEngramEvalRequest(ref: string): Promise<EngramEvalOutcome> {
+    if (!this.engramKit) {
+      throw new Error('engram evaluation is not configured');
+    }
+
+    let result;
+    try {
+      result = await this.engramKit.evaluator.evaluate({ ref });
+    } catch (err) {
+      console.error('[saoirse] engram evaluation error:', err);
+      return { ok: false, error: (err as Error).message };
+    }
+
+    if (!result.ok) {
+      console.error('[saoirse] engram candidate rejected:', result.rationale);
+      return { ok: false, error: result.error ?? result.rationale };
+    }
+
+    const record: EngramProposalRecord = {
+      id: result.id,
+      status: 'pending',
+      tier: 0,
+      candidateRef: result.candidateRef,
+      candidateSha: result.candidateSha,
+      currentSha: result.currentSha,
+      sandboxDir: result.sandboxDir,
+      testResult: result.testResult,
+      rationale: result.rationale,
+      diff: result.diff,
+      testOutput: result.testOutput,
+    };
+    await writeProposal(this.engramKit.proposalsDir, record);
+    return {
+      ok: true,
+      proposalId: record.id,
+      status: 'pending',
+      candidateSha: record.candidateSha,
+      currentSha: record.currentSha,
     };
   }
 }

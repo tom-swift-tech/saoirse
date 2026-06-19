@@ -9,3 +9,6 @@ dist/
 
 # Accreted tool-builder artifacts — sandboxed, un-promoted, runtime-only.
 sandbox/
+
+# Tier-0 Engram candidate clones — evaluated, un-promoted, runtime-only.
+engram-eval/
