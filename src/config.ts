@@ -37,6 +37,15 @@ export interface SaoirseConfig {
   engramBaselineTests: number;
   /** Optional override of the Engram clone source; default parsed from the pin (ENGRAM_REPO). */
   engramRepo: string | undefined;
+  /** pi launcher for Tier-0 authoring (PI_AUTHOR_COMMAND). Undefined => authoring disabled. */
+  piAuthorCommand: string | undefined;
+  /** Sandbox root for Tier-0 authored-change clones (ENGRAM_AUTHOR_SANDBOX). */
+  engramAuthorSandbox: string;
+  /** Ceiling on one author cycle (clone+pi+install+test), ms (ENGRAM_AUTHOR_TIMEOUT_MS). */
+  engramAuthorTimeoutMs: number;
+  /** RESERVED for the deferred publish slice: the pre-configured push remote to
+   *  publish authored branches to (ENGRAM_PUSH_REMOTE). Unused this slice. */
+  engramPushRemote: string | undefined;
 }
 
 export type EmbeddingMode = 'local' | 'ollama' | 'offline';
@@ -62,6 +71,11 @@ export function loadConfig(
       parseInt(env.ENGRAM_EVAL_TIMEOUT_MS ?? '900000', 10) || 900_000,
     engramBaselineTests: parseInt(env.ENGRAM_BASELINE_TESTS ?? '334', 10) || 334,
     engramRepo: env.ENGRAM_REPO || undefined,
+    piAuthorCommand: env.PI_AUTHOR_COMMAND || undefined,
+    engramAuthorSandbox: env.ENGRAM_AUTHOR_SANDBOX ?? './engram-author',
+    engramAuthorTimeoutMs:
+      parseInt(env.ENGRAM_AUTHOR_TIMEOUT_MS ?? '900000', 10) || 900_000,
+    engramPushRemote: env.ENGRAM_PUSH_REMOTE || undefined,
   };
 }
 

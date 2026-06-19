@@ -14,10 +14,10 @@
 // or rejected candidate leaves the running daemon entirely unchanged.
 // =============================================================================
 
-import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { resolveInside } from './sandbox.js';
+import { runCommand, tail, type RunResult } from './exec.js';
 
 export interface EngramCandidate {
   /** Git ref to evaluate — a full SHA, tag, or branch on the Engram repo. */
@@ -213,36 +213,9 @@ export class GitEngramEvaluator implements EngramEvaluator {
     return output;
   }
 
-  private run(
-    cmd: string,
-    args: string[],
-    cwd: string,
-  ): Promise<{ code: number; output: string }> {
-    return new Promise((resolve, reject) => {
-      const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-      let output = '';
-      const timer = setTimeout(() => {
-        child.kill('SIGKILL');
-        reject(new Error(`${cmd} ${args[0]} timed out`));
-      }, this.config.timeoutMs ?? 900_000);
-
-      child.stdout.on('data', (d) => (output += d));
-      child.stderr.on('data', (d) => (output += d));
-      child.on('error', (err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
-      child.on('close', (code) => {
-        clearTimeout(timer);
-        resolve({ code: code ?? 1, output });
-      });
-    });
+  private run(cmd: string, args: string[], cwd: string): Promise<RunResult> {
+    return runCommand(cmd, args, cwd, this.config.timeoutMs ?? 900_000);
   }
-}
-
-/** Keep only the last `max` characters — test logs are huge; the tail is enough. */
-function tail(text: string, max = 4000): string {
-  return text.length <= max ? text : text.slice(text.length - max);
 }
 
 // A git ref: SHA, tag, or branch (branches may contain "/"). The allowlist

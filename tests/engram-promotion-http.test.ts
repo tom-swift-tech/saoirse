@@ -98,6 +98,7 @@ function startServer(opts: { accept?: boolean; wireEngram?: boolean } = {}): voi
       sandboxDir: sandboxRoot,
       packageJsonPath,
       engramEvalSandbox,
+      engramAuthorSandbox: join(root, 'engram-author'),
       token: TOKEN,
       status: async () => ({
         model: { name: 'm', endpoint: 'e', reachable: false },

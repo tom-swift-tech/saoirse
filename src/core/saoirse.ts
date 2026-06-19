@@ -22,11 +22,13 @@ import type {
 } from './model-gateway.js';
 import type { BuildResult, ToolBuilder, ToolSpec } from './tool-builder.js';
 import type { EngramEvaluator } from './engram-evaluator.js';
+import type { EngramAuthor, EngramChangeSpec } from './engram-author.js';
 import type { LoadedSkill } from './skills.js';
 import { toToolDefinition } from './skills.js';
 import type { SkillRunner } from './skill-runner.js';
 import {
   writeProposal,
+  type EngramAuthorRecord,
   type EngramProposalRecord,
   type ToolProposalRecord,
 } from '../proposals.js';
@@ -87,6 +89,8 @@ export type BuildOutcome =
  */
 export interface EngramKit {
   evaluator: EngramEvaluator;
+  /** Tier-0 authoring (pi-on-Engram). Optional — wired only when configured. */
+  author?: EngramAuthor;
   proposalsDir: string;
   /** The SHA the daemon is pinned to right now — captured in every proposal. */
   currentSha: string;
@@ -101,6 +105,16 @@ export type EngramEvalOutcome =
       status: 'pending';
       candidateSha: string;
       currentSha: string;
+    }
+  | { ok: false; error: string };
+
+export type EngramAuthorOutcome =
+  | {
+      ok: true;
+      proposalId: string;
+      status: 'pending';
+      branch: string;
+      localSha: string;
     }
   | { ok: false; error: string };
 
@@ -297,6 +311,7 @@ export class SaoirseCore {
       id: result.id,
       status: 'pending',
       tier: 0,
+      kind: 'repin',
       candidateRef: result.candidateRef,
       candidateSha: result.candidateSha,
       currentSha: result.currentSha,
@@ -313,6 +328,63 @@ export class SaoirseCore {
       status: 'pending',
       candidateSha: record.candidateSha,
       currentSha: record.currentSha,
+    };
+  }
+
+  /** Whether Tier-0 Engram authoring is configured (PI_AUTHOR_COMMAND set). */
+  get canAuthorEngram(): boolean {
+    return this.engramKit?.author !== undefined;
+  }
+
+  /**
+   * AUTHOR an Engram change (Tier 0, author-only): pi edits a sandbox clone, the
+   * change is committed to a LOCAL branch and tested against Engram's own suite.
+   * On success this writes an ACCRETED author record (a reviewable diff) — it
+   * NEVER pushes and NEVER re-pins. A failed author is logged and leaves the
+   * running daemon and package.json entirely unchanged.
+   */
+  async handleEngramAuthorRequest(
+    spec: EngramChangeSpec,
+  ): Promise<EngramAuthorOutcome> {
+    if (!this.engramKit?.author) {
+      throw new Error('engram authoring is not configured');
+    }
+
+    let result;
+    try {
+      result = await this.engramKit.author.author(spec);
+    } catch (err) {
+      console.error('[saoirse] engram authoring error:', err);
+      return { ok: false, error: (err as Error).message };
+    }
+
+    if (!result.ok) {
+      console.error('[saoirse] engram authoring rejected:', result.rationale);
+      return { ok: false, error: result.error ?? 'authoring failed' };
+    }
+
+    const record: EngramAuthorRecord = {
+      id: result.id,
+      status: 'pending',
+      tier: 0,
+      kind: 'author',
+      description: spec.description,
+      branch: result.branch,
+      baseSha: result.baseSha,
+      localSha: result.localSha,
+      sandboxDir: result.sandboxDir,
+      testResult: result.testResult,
+      rationale: result.rationale,
+      diff: result.diff,
+      testOutput: result.testOutput,
+    };
+    await writeProposal(this.engramKit.proposalsDir, record);
+    return {
+      ok: true,
+      proposalId: record.id,
+      status: 'pending',
+      branch: record.branch,
+      localSha: record.localSha,
     };
   }
 }

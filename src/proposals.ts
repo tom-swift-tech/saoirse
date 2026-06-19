@@ -45,11 +45,13 @@ export interface ToolProposalRecord {
   testOutput: string;
 }
 
-/** A Tier-0 (Engram source) record persisted as proposals/<id>.json. */
+/** A Tier-0 re-pin record (evaluate→repin) persisted as proposals/<id>.json. */
 export interface EngramProposalRecord {
   id: string;
   status: 'pending';
   tier: 0;
+  /** Distinguishes a re-pin proposal from an authored-change record. */
+  kind: 'repin';
   /** The candidate git ref that was evaluated. */
   candidateRef: string;
   /** The full SHA the ref resolved to — what package.json would be re-pinned to. */
@@ -65,8 +67,37 @@ export interface EngramProposalRecord {
   testOutput: string;
 }
 
-/** Either governance-tier record; discriminated on `tier`. */
-export type ProposalRecord = ToolProposalRecord | EngramProposalRecord;
+/**
+ * A Tier-0 authored-change record (authoring half). It is ACCRETED — a reviewable
+ * diff on a LOCAL branch that passed Engram's suite, NOT re-pinnable: localSha is
+ * on no remote, so package.json cannot point at it. Making it installable (push +
+ * evaluate→repin) is the deferred publish step; until then approve returns 501.
+ */
+export interface EngramAuthorRecord {
+  id: string;
+  status: 'pending';
+  tier: 0;
+  kind: 'author';
+  description: string;
+  /** Local branch pi's commit landed on (e.g. saoirse/author-<id>). */
+  branch: string;
+  /** The pin the change was based on. */
+  baseSha: string;
+  /** pi's committed SHA — LOCAL ONLY, not on any remote. */
+  localSha: string;
+  /** Absolute sandbox clone holding the branch. */
+  sandboxDir: string;
+  testResult: EngramTestResult;
+  rationale: string;
+  diff: string;
+  testOutput: string;
+}
+
+/** Any governance record; discriminated on `tier` and (for tier 0) `kind`. */
+export type ProposalRecord =
+  | ToolProposalRecord
+  | EngramProposalRecord
+  | EngramAuthorRecord;
 
 export interface PromotionDeps {
   proposalsDir: string;
@@ -118,15 +149,18 @@ async function loadRecord<T extends ProposalRecord = ProposalRecord>(
 }
 
 /**
- * Read just the governance tier of a queued proposal, so a single route can
- * dispatch approve/reject to the correct gate. Throws ENOENT (→ 404) if absent.
+ * Read the routing of a queued proposal — tier, plus the tier-0 `kind` — so a
+ * single approve/reject route dispatches to the correct gate. Throws ENOENT
+ * (→ 404) if absent. `kind` is undefined for Tier-1 records.
  */
-export async function readProposalTier(
+export async function readProposalRouting(
   proposalsDir: string,
   id: string,
-): Promise<0 | 1> {
+): Promise<{ tier: 0 | 1; kind?: 'repin' | 'author' }> {
   const { record } = await loadRecord(proposalsDir, id);
-  return record.tier;
+  return record.tier === 0
+    ? { tier: 0, kind: record.kind }
+    : { tier: 1 };
 }
 
 /**
@@ -242,8 +276,8 @@ export async function approveEngramProposal(
     deps.proposalsDir,
     id,
   );
-  if (record.tier !== 0) {
-    throw new Error(`proposal ${id} is not a Tier-0 (Engram) proposal`);
+  if (record.tier !== 0 || record.kind !== 'repin') {
+    throw new Error(`proposal ${id} is not a Tier-0 re-pin proposal`);
   }
 
   const raw = await readFile(deps.packageJsonPath, 'utf8');
@@ -301,5 +335,20 @@ export async function rejectEngramProposal(
   }
   await rm(join(deps.proposalsDir, `${id}.json`), { force: true });
   console.log(`[saoirse] rejected engram proposal ${id} — discarded clone`);
+  return { id };
+}
+
+/** Discard a pending authored-change record: delete the clone (it holds the
+ *  local branch) and dequeue. Never pushes, never touches package.json. */
+export async function rejectEngramAuthor(
+  id: string,
+  deps: { proposalsDir: string; authorSandboxRoot: string },
+): Promise<{ id: string }> {
+  const { record } = await loadRecord<EngramAuthorRecord>(deps.proposalsDir, id);
+  if (record.sandboxDir && isInside(deps.authorSandboxRoot, record.sandboxDir)) {
+    await rm(record.sandboxDir, { recursive: true, force: true });
+  }
+  await rm(join(deps.proposalsDir, `${id}.json`), { force: true });
+  console.log(`[saoirse] rejected engram author record ${id} — discarded clone`);
   return { id };
 }

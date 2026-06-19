@@ -15,7 +15,7 @@ import { join } from 'path';
 import {
   approveEngramProposal,
   rejectEngramProposal,
-  readProposalTier,
+  readProposalRouting,
   parseEngramPin,
   writeProposal,
   type EngramProposalRecord,
@@ -47,6 +47,7 @@ async function seedEngramProposal(id = 'engram-cand-1'): Promise<string> {
     id,
     status: 'pending',
     tier: 0,
+    kind: 'repin',
     candidateRef: CANDIDATE,
     candidateSha: CANDIDATE,
     currentSha: CURRENT,
@@ -139,13 +140,38 @@ describe('rejectEngramProposal', () => {
   });
 });
 
-describe('readProposalTier — route dispatch', () => {
-  it('reports 0 for an engram proposal', async () => {
+describe('readProposalRouting — route dispatch', () => {
+  it('reports tier 0 / kind repin for a re-pin proposal', async () => {
     const id = await seedEngramProposal();
-    expect(await readProposalTier(proposalsDir, id)).toBe(0);
+    expect(await readProposalRouting(proposalsDir, id)).toEqual({
+      tier: 0,
+      kind: 'repin',
+    });
   });
 
-  it('reports 1 for a tool proposal', async () => {
+  it('reports tier 0 / kind author for an authored-change record', async () => {
+    await writeProposal(proposalsDir, {
+      id: 'author-1',
+      status: 'pending',
+      tier: 0,
+      kind: 'author',
+      description: 'do a thing',
+      branch: 'saoirse/author-author-1',
+      baseSha: CURRENT,
+      localSha: 'deadbeef',
+      sandboxDir: join(root, 'engram-author', 'author-1'),
+      testResult: { passed: 340, failed: 0, total: 340 },
+      rationale: '',
+      diff: '',
+      testOutput: '',
+    });
+    expect(await readProposalRouting(proposalsDir, 'author-1')).toEqual({
+      tier: 0,
+      kind: 'author',
+    });
+  });
+
+  it('reports tier 1 for a tool proposal', async () => {
     await writeProposal(proposalsDir, {
       id: 'tool-1',
       status: 'pending',
@@ -158,6 +184,6 @@ describe('readProposalTier — route dispatch', () => {
       diff: '',
       testOutput: '',
     });
-    expect(await readProposalTier(proposalsDir, 'tool-1')).toBe(1);
+    expect(await readProposalRouting(proposalsDir, 'tool-1')).toEqual({ tier: 1 });
   });
 });

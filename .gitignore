@@ -12,3 +12,6 @@ sandbox/
 
 # Tier-0 Engram candidate clones — evaluated, un-promoted, runtime-only.
 engram-eval/
+
+# Tier-0 authored-change clones — pi-edited local branches, un-published, runtime-only.
+engram-author/

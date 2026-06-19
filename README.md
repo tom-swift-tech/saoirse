@@ -18,7 +18,7 @@ end-to-end against a local model endpoint.
 ```
 cp .env.example .env          # set SAOIRSE_TOKEN; point MODEL_ENDPOINT at an OpenAI-compatible server
 npm install                   # Node 20 ONLY — shares an ABI-sensitive native dep with Engram
-npm test                      # 129 tests, green
+npm test                      # 138 tests, green
 npm run dev                   # or: npm run build && npm start
 curl -X POST localhost:8787/message -d '{"text":"what'\''s new"}'
 ```
@@ -169,6 +169,24 @@ The re-pin **refuses** if `package.json`'s current pin drifted from the SHA the
 candidate was evaluated against — the evaluation must describe the re-pin it
 authorizes. Approve/reject share the proposals routes with Tier 1; the daemon
 dispatches by the proposal's recorded tier.
+
+### Authoring Engram changes (author-only)
+
+Saoirse can also **write** an Engram change via pi. `POST /engram/author
+{description, test?}` (TOKEN) clones Engram into a sandbox
+(`ENGRAM_AUTHOR_SANDBOX`), runs the pi-author adapter to edit the clone in place,
+commits the change to a local branch `saoirse/author-<id>`, and — only if the
+change is non-empty and still clears the acceptance gate — accretes a reviewable
+record (the unified diff). Set `PI_AUTHOR_COMMAND=node scripts/pi-author.mjs` to
+enable; unset, the route returns 503.
+
+This is **author-only**: nothing is pushed and nothing is re-pinned. An authored
+record is ACCRETED — `reject` discards the local branch, and `approve` returns
+**501** (an authored change has no remote SHA, so it cannot be re-pinned).
+Publishing the branch to a pre-configured `ENGRAM_PUSH_REMOTE` — which makes its
+SHA installable and lets it flow into the `evaluate`→re-pin gate above — is a
+separate, deferred step. The running daemon and `package.json` are never touched
+by an author or a reject.
 
 ## Committed skills (how a promoted tool runs)
 

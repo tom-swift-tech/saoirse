@@ -11,8 +11,10 @@
 //   GET  /health                              -> { status }           (open)
 //   POST /build                     { name, description, test? }      (TOKEN)
 //   POST /engram/evaluate           { ref }  -> Tier-0 eval + proposal (TOKEN)
+//   POST /engram/author             { description, test? } -> author   (TOKEN)
 //   POST /proposals/:id/approve     -> tier 1: promote -> skills/;     (TOKEN — the gate)
-//                                      tier 0: re-pin engram in package.json
+//                                      tier 0 repin: re-pin package.json;
+//                                      tier 0 author: 501 (publish deferred)
 //   POST /proposals/:id/reject      -> discard the sandbox/clone        (TOKEN)
 // =============================================================================
 
@@ -22,7 +24,8 @@ import {
   approveEngramProposal,
   approveProposal,
   readProposals,
-  readProposalTier,
+  readProposalRouting,
+  rejectEngramAuthor,
   rejectEngramProposal,
   rejectProposal,
 } from '../proposals.js';
@@ -45,6 +48,8 @@ export interface HttpDeps {
   packageJsonPath: string;
   /** Sandbox root for Tier-0 Engram candidate clones. */
   engramEvalSandbox: string;
+  /** Sandbox root for Tier-0 authored-change clones. */
+  engramAuthorSandbox: string;
   /** Privileged-action token (same as WS). Undefined => privileged routes fail closed. */
   token: string | undefined;
   /** Status provider (model name/endpoint/reachability + version). Built in index.ts. */
@@ -137,14 +142,44 @@ export function createRouter(deps: HttpDeps): Router {
         return send(res, outcome.ok ? 200 : 422, outcome);
       }
 
+      if (method === 'POST' && path === '/engram/author') {
+        if (!authorized(req, deps.token)) return unauthorized(res);
+        if (!deps.core.canAuthorEngram) {
+          return send(res, 503, { error: 'engram authoring is not configured' });
+        }
+        const body = (await readJsonBody(req)) as {
+          description?: unknown;
+          test?: unknown;
+        };
+        if (typeof body.description !== 'string' || body.description.trim() === '') {
+          return send(res, 400, {
+            error: 'body must include non-empty "description"',
+          });
+        }
+        const outcome = await deps.core.handleEngramAuthorRequest({
+          description: body.description.trim(),
+          test: typeof body.test === 'string' ? body.test : undefined,
+        });
+        return send(res, outcome.ok ? 200 : 422, outcome);
+      }
+
       const promote = PROMOTE_RE.exec(path);
       if (method === 'POST' && promote) {
         if (!authorized(req, deps.token)) return unauthorized(res);
         const [, id, action] = promote;
         try {
-          // One route, two gates: dispatch on the proposal's governance tier.
-          const tier = await readProposalTier(deps.proposalsDir, id);
+          // One route, three gates: dispatch on tier and (for tier 0) kind.
+          const { tier, kind } = await readProposalRouting(deps.proposalsDir, id);
           if (action === 'approve') {
+            if (tier === 0 && kind === 'author') {
+              // Authored changes are not re-pinnable (local SHA, no remote);
+              // publishing is the deferred step. Fail loud, not silently.
+              return send(res, 501, {
+                error:
+                  'authored changes are not publishable yet — the publish step ' +
+                  'is deferred. Reject to discard the local branch.',
+              });
+            }
             if (tier === 0) {
               const result = await approveEngramProposal(id, {
                 proposalsDir: deps.proposalsDir,
@@ -159,6 +194,13 @@ export function createRouter(deps: HttpDeps): Router {
               sandboxRoot: deps.sandboxDir,
             });
             return send(res, 200, { promoted: result.toolName, ...result });
+          }
+          if (tier === 0 && kind === 'author') {
+            const result = await rejectEngramAuthor(id, {
+              proposalsDir: deps.proposalsDir,
+              authorSandboxRoot: deps.engramAuthorSandbox,
+            });
+            return send(res, 200, { rejected: result.id });
           }
           if (tier === 0) {
             const result = await rejectEngramProposal(id, {

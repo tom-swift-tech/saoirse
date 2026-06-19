@@ -18,6 +18,7 @@ import { EngramMemory } from './core/memory.js';
 import { OpenAICompatibleGateway } from './core/openai-compatible-gateway.js';
 import { PiToolBuilder } from './core/pi-tool-builder.js';
 import { GitEngramEvaluator } from './core/engram-evaluator.js';
+import { PiEngramAuthor, type EngramAuthor } from './core/engram-author.js';
 import { loadSkills } from './core/skills.js';
 import { ProcessSkillRunner } from './core/skill-runner.js';
 import {
@@ -122,13 +123,29 @@ async function main(): Promise<void> {
       baselineTestCount: config.engramBaselineTests,
       timeoutMs: config.engramEvalTimeoutMs,
     });
+    // Tier-0 authoring (pi-on-Engram): wired only when PI_AUTHOR_COMMAND is set.
+    // Author-only — it produces a reviewable local branch, never pushes.
+    let author: EngramAuthor | undefined;
+    if (config.piAuthorCommand) {
+      author = new PiEngramAuthor({
+        command: config.piAuthorCommand,
+        repoUrl: config.engramRepo ?? pin.repoUrl,
+        baseSha: pin.sha,
+        sandboxRoot: resolve(config.engramAuthorSandbox),
+        baselineTestCount: config.engramBaselineTests,
+        timeoutMs: config.engramAuthorTimeoutMs,
+      });
+    }
     engramKit = {
       evaluator,
+      author,
       proposalsDir,
       currentSha: pin.sha,
       baselineTestCount: config.engramBaselineTests,
     };
-    engramTier0Note = `evaluate-and-repin (pinned ${pin.sha.slice(0, 7)}, baseline ${config.engramBaselineTests})`;
+    engramTier0Note =
+      `evaluate-and-repin (pinned ${pin.sha.slice(0, 7)}, baseline ${config.engramBaselineTests})` +
+      `; authoring ${author ? 'enabled' : 'disabled (PI_AUTHOR_COMMAND unset)'}`;
   } catch (err) {
     console.warn(
       `[saoirse] Tier-0 Engram evaluation disabled: ${(err as Error).message}`,
@@ -146,6 +163,7 @@ async function main(): Promise<void> {
       sandboxDir,
       packageJsonPath,
       engramEvalSandbox: resolve(config.engramEvalSandbox),
+      engramAuthorSandbox: resolve(config.engramAuthorSandbox),
       token: config.token,
       status: async () => ({
         model: {
