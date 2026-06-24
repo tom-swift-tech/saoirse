@@ -63,6 +63,29 @@ async function probeReachable(endpoint: string): Promise<boolean> {
   }
 }
 
+/** Reachability probe for the Ollama embeddings endpoint.
+ *
+ * Engram's embeddings target engramEmbeddingsUrl, which is INDEPENDENT of
+ * MODEL_ENDPOINT. Chat can succeed while recall silently degrades when the
+ * two services diverge. This probe makes that divergence observable.
+ *
+ * Modelled exactly on probeReachable: AbortController + ~1.5 s timeout +
+ * catch → false. Must NEVER block boot or throw — returns false on any error.
+ */
+async function probeEmbeddingsReachable(baseUrl: string): Promise<boolean> {
+  const base = baseUrl.replace(/\/+$/, '');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1500);
+  try {
+    await fetch(`${base}/api/tags`, { signal: controller.signal });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function main(): Promise<void> {
   // Load .env from the working directory first; shell env still wins.
   loadDotenv();
@@ -165,18 +188,34 @@ async function main(): Promise<void> {
       engramEvalSandbox: resolve(config.engramEvalSandbox),
       engramAuthorSandbox: resolve(config.engramAuthorSandbox),
       token: config.token,
-      status: async () => ({
-        model: {
-          name: config.modelName,
-          endpoint: config.modelEndpoint,
-          reachable: await probeReachable(config.modelEndpoint),
-        },
-        skills: {
-          count: skillKit.skills.length,
-          names: core.skillNames,
-        },
-        version,
-      }),
+      status: async () => {
+        // Probe model + embeddings concurrently so /status stays responsive
+        // even when both are unreachable (each probe is bounded at ~1.5 s).
+        // Embeddings is probed only in 'ollama' mode — in 'offline'/'local'
+        // there is no independent Ollama to reach (null = n/a).
+        const [modelReachable, embeddingsReachable] = await Promise.all([
+          probeReachable(config.modelEndpoint),
+          config.engramEmbeddings === 'ollama'
+            ? probeEmbeddingsReachable(config.engramEmbeddingsUrl)
+            : Promise.resolve(null),
+        ]);
+        return {
+          model: {
+            name: config.modelName,
+            endpoint: config.modelEndpoint,
+            reachable: modelReachable,
+          },
+          skills: {
+            count: skillKit.skills.length,
+            names: core.skillNames,
+          },
+          version,
+          embeddings: {
+            mode: config.engramEmbeddings,
+            reachable: embeddingsReachable,
+          },
+        };
+      },
     }),
   );
   attachWebSocket(server, { token: config.token });
@@ -231,8 +270,15 @@ async function main(): Promise<void> {
       `[saoirse] core listening on http://localhost:${config.port}  (HTTP + WS)`,
     );
     console.log(
-      `[saoirse] MODEL_ENDPOINT=${config.modelEndpoint}  MODEL_NAME=${config.modelName}  ENGRAM_DB=${config.engramDb}  embeddings=${config.engramEmbeddings}`,
+      `[saoirse] MODEL_ENDPOINT=${config.modelEndpoint}  MODEL_NAME=${config.modelName}  ENGRAM_DB=${config.engramDb}`,
     );
+    // Embeddings line: mode + target URL. The embeddings endpoint is independent
+    // of MODEL_ENDPOINT — a mismatch degrades recall without a dedicated note.
+    const embeddingsNote =
+      config.engramEmbeddings === 'ollama'
+        ? `ollama (${config.engramEmbeddingsUrl}) — probe on /status`
+        : `${config.engramEmbeddings} (no reachability probe)`;
+    console.log(`[saoirse] embeddings: ${embeddingsNote}`);
     console.log(
       `[saoirse] tool-builder: ${
         toolKit ? `pi (sandbox ${sandboxDir})` : 'disabled (PI_COMMAND unset)'

@@ -46,6 +46,11 @@ export interface SaoirseConfig {
   /** RESERVED for the deferred publish slice: the pre-configured push remote to
    *  publish authored branches to (ENGRAM_PUSH_REMOTE). Unused this slice. */
   engramPushRemote: string | undefined;
+  /** Base URL for the Ollama instance that serves Engram's embeddings
+   *  (ENGRAM_EMBEDDINGS_URL). Independent of MODEL_ENDPOINT — chat and
+   *  embeddings can target different services; a mismatch degrades recall
+   *  silently without this probe. Only used in 'ollama' embedding mode. */
+  engramEmbeddingsUrl: string;
 }
 
 export type EmbeddingMode = 'local' | 'ollama' | 'offline';
@@ -76,6 +81,7 @@ export function loadConfig(
     engramAuthorTimeoutMs:
       parseInt(env.ENGRAM_AUTHOR_TIMEOUT_MS ?? '900000', 10) || 900_000,
     engramPushRemote: env.ENGRAM_PUSH_REMOTE || undefined,
+    engramEmbeddingsUrl: env.ENGRAM_EMBEDDINGS_URL ?? 'http://localhost:11434',
   };
 }
 

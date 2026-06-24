@@ -159,9 +159,23 @@ until the proxy lands.
 
 1. **Store form** — env-prefix (proposed) vs a dedicated gitignored vault file.
    Env-prefix wins for simplicity; revisit if secret count grows.
-2. **Node permission model viability** — is `--experimental-permission` stable
-   enough under the Node-20 ABI pin to depend on for fs/exec, or is a container/
-   sandbox the real long-term answer? Needs a spike before Phase 2.
+2. **Node permission model viability** — RESOLVED by spike (Node 20.20.2,
+   `--experimental-permission`). Phase 2 (fs + exec enforcement) is **viable**:
+   - `--allow-fs-read=<path>` / `--allow-fs-write=<path>`: reads/writes outside
+     the allowlisted paths fail with `ERR_ACCESS_DENIED`; inside paths succeed.
+     **Implementation gotcha:** the entry script's own path (and any node_modules
+     it imports) MUST be included in `--allow-fs-read`, or Node can't even load
+     the module (`ERR_ACCESS_DENIED` in the loader). So the runner must always
+     allowlist the skill's own dir + temp, then add the declared `fs.read` /
+     `fs.write` scopes on top.
+   - child_process is **denied by default** under `--experimental-permission`;
+     `spawn` fails `ERR_ACCESS_DENIED` unless `--allow-child-process` is passed —
+     so `exec:false` is the natural default and `exec:true` opts in.
+   - **Network is NOT covered** (no network flag in Node 20): an outbound connect
+     is attempted normally — confirming `net` enforcement needs the Phase 3 proxy,
+     not the permission model.
+   Caveat: it prints an `ExperimentalWarning` (cosmetic) and is experimental, so
+   pin behavior to the Node-20 version and re-verify on any Node bump.
 3. **Per-call vs per-skill grants** — is a manifest-level grant sufficient, or do
    high-blast-radius skills (infra, code-exec) need per-invocation confirmation
    (a Tier-1.5 "ask the human each time")? Likely yes for Tier C/D.

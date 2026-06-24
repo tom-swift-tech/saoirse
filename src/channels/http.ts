@@ -18,6 +18,7 @@
 //   POST /proposals/:id/reject      -> discard the sandbox/clone        (TOKEN)
 // =============================================================================
 
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'http';
 import type { SaoirseCore } from '../core/saoirse.js';
 import {
@@ -35,6 +36,8 @@ export interface StatusResponse {
   /** Committed skills loaded at daemon start (Tier-1 capabilities live this run). */
   skills: { count: number; names: string[] };
   version: string;
+  /** Embedder health: mode + reachability. reachable is null when mode is not 'ollama'. */
+  embeddings: { mode: string; reachable: boolean | null };
 }
 
 export interface HttpDeps {
@@ -224,6 +227,11 @@ export function createRouter(deps: HttpDeps): Router {
 
       return send(res, 404, { error: 'not found' });
     } catch (err) {
+      // Body too large: 413 before the generic 500 handler so the client gets
+      // an actionable status code (and the OOM budget is never consumed).
+      if (err instanceof BodyTooLargeError) {
+        return send(res, 413, { error: err.message });
+      }
       // Surface the failure on the headless daemon's own console — the response
       // body only carries the message, which no one is watching server-side.
       console.error('[saoirse] handler error:', err);
@@ -232,11 +240,20 @@ export function createRouter(deps: HttpDeps): Router {
   };
 }
 
-/** Bearer-token check. Fails closed when no token is configured. */
+/** Constant-time bearer-token check. Fails closed when no token is configured.
+ *
+ * We hash both sides with SHA-256 before comparing so that timingSafeEqual
+ * always receives equal-length buffers (it throws on length mismatch, which
+ * would leak the expected length via a thrown exception side-channel). The
+ * hash step collapses all inputs to 32 bytes regardless of token length.
+ */
 function authorized(req: IncomingMessage, token: string | undefined): boolean {
   if (!token) return false;
   const auth = req.headers['authorization'];
-  return typeof auth === 'string' && auth === `Bearer ${token}`;
+  if (typeof auth !== 'string') return false;
+  const expected = createHash('sha256').update(`Bearer ${token}`).digest();
+  const actual = createHash('sha256').update(auth).digest();
+  return timingSafeEqual(expected, actual);
 }
 
 function unauthorized(res: ServerResponse): void {
@@ -250,10 +267,36 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+/** Maximum request body size. /message is unauthenticated so an unbounded
+ *  buffer is an OOM vector — reject anything beyond this before accumulating. */
+const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MiB
+
+/** Body reader with a hard size cap. Throws a {status,body} sentinel on
+ *  oversize so the router can respond 413 without buffering the full payload. */
+async function readJsonBody(
+  req: IncomingMessage,
+): Promise<unknown> {
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
+  let total = 0;
+  for await (const chunk of req) {
+    const buf = chunk as Buffer;
+    total += buf.byteLength;
+    if (total > MAX_BODY_BYTES) {
+      // Drain the socket so the connection stays clean (HTTP keep-alive).
+      req.resume();
+      throw new BodyTooLargeError();
+    }
+    chunks.push(buf);
+  }
   const raw = Buffer.concat(chunks).toString('utf8');
   if (!raw) return {};
   return JSON.parse(raw);
+}
+
+/** Sentinel thrown by readJsonBody when the payload exceeds MAX_BODY_BYTES. */
+class BodyTooLargeError extends Error {
+  constructor() {
+    super(`request body exceeds ${MAX_BODY_BYTES} bytes`);
+    this.name = 'BodyTooLargeError';
+  }
 }

@@ -7,10 +7,14 @@
 // events come later.
 //
 // Auth fails closed: if no token is configured, every connection is rejected.
-// Token may be supplied via ?token=, Authorization: Bearer, or the
-// Sec-WebSocket-Protocol header.
+// Token may be supplied via Authorization: Bearer (preferred), the
+// Sec-WebSocket-Protocol header, or ?token= query string. The query-string
+// path is preserved because the existing ws-auth test suite exercises it;
+// prefer the header path in clients because query strings appear in proxy
+// logs and server access logs.
 // =============================================================================
 
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, Server } from 'http';
 import type { Duplex } from 'stream';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -31,7 +35,7 @@ export function attachWebSocket(server: Server, deps: WsDeps): WebSocketServer {
       reject(socket, 404, 'Not Found');
       return;
     }
-    if (!deps.token || extractToken(req) !== deps.token) {
+    if (!tokenAuthorized(req, deps.token)) {
       reject(socket, 401, 'Unauthorized');
       return;
     }
@@ -60,6 +64,24 @@ export function attachWebSocket(server: Server, deps: WsDeps): WebSocketServer {
   });
 
   return wss;
+}
+
+/** Constant-time token check. Fails closed when no token is configured.
+ *
+ * We hash both sides with SHA-256 so timingSafeEqual always receives
+ * equal-length (32-byte) buffers — a length mismatch exception would itself
+ * be a side-channel. Hash collapses any token length to a fixed digest.
+ */
+function tokenAuthorized(
+  req: IncomingMessage,
+  token: string | undefined,
+): boolean {
+  if (!token) return false;
+  const candidate = extractToken(req);
+  if (!candidate) return false;
+  const expected = createHash('sha256').update(token).digest();
+  const actual = createHash('sha256').update(candidate).digest();
+  return timingSafeEqual(expected, actual);
 }
 
 function reject(socket: Duplex, code: number, reason: string): void {

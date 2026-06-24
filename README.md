@@ -6,6 +6,7 @@ multiple operational channels (mobile, web, CLI, TUI, voice).
 - **Identity & governance:** see [SYSTEM.md](./SYSTEM.md)
 - **Architecture:** see [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 - **Placing a new capability:** see [docs/GOVERNANCE.md](./docs/GOVERNANCE.md)
+- **Running as an always-on supervised service:** see [docs/DEPLOY.md](./docs/DEPLOY.md)
 
 ## Status
 
@@ -24,10 +25,11 @@ npm run dev                   # or: npm run build && npm start
 curl -X POST localhost:8787/message -d '{"text":"what'\''s new"}'
 ```
 
-The daemon loads `.env` from its working directory at startup (`PORT`,
-`MODEL_ENDPOINT`, `MODEL_NAME`, `SAOIRSE_TOKEN`, `ENGRAM_DB`, `ENGRAM_EMBEDDINGS`).
-Variables already set in the shell override the file. Restart the daemon after
-editing `.env`.
+The daemon loads `.env` from the package root at startup — regardless of the
+working directory it's launched from (`PORT`, `MODEL_ENDPOINT`, `MODEL_NAME`,
+`SAOIRSE_TOKEN`, `ENGRAM_DB`, `ENGRAM_EMBEDDINGS`). Variables already set in the
+shell override the file; if no `.env` is found, the daemon says so on stderr and
+falls back to shell env / defaults. Restart the daemon after editing `.env`.
 
 A production reply needs a reachable OpenAI-compatible endpoint at
 `MODEL_ENDPOINT` (Herd, Ollama, llama-server, vLLM — all interchangeable); the
@@ -230,6 +232,12 @@ never takes the north-facing channels down.
 - HTTP + WebSocket — north-facing channel contract
 - NATS — east-west fabric (later)
 - pi — the coding agent behind build-on-the-fly (`scripts/pi-build.mjs` adapter)
+
+## Deployment (always-on)
+
+For both Linux (systemd unit) and Windows (pm2, NSSM, or Task Scheduler),
+including Node-20 path caveats, graceful restart steps, and health-check
+endpoints — see **[docs/DEPLOY.md](./docs/DEPLOY.md)**.
 
 ## Principles
 

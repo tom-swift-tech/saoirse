@@ -41,12 +41,45 @@ describe('WS auth', () => {
     await expect(attempt('')).rejects.toThrow();
   });
 
-  it('rejects a connection with a wrong token', async () => {
+  it('rejects a connection with a wrong token (query string)', async () => {
     await expect(attempt('?token=wrong')).rejects.toThrow();
   });
 
-  it('accepts a connection with the valid token and pushes hello', async () => {
+  it('rejects a connection with a wrong token (Authorization header)', async () => {
+    const ws = new WebSocket(`ws://localhost:${port}/ws`, {
+      headers: { Authorization: 'Bearer wrong-token' },
+    });
+    await expect(
+      new Promise<void>((resolve, reject) => {
+        ws.on('open', () => resolve());
+        ws.on('error', (err) => reject(err));
+        ws.on('unexpected-response', (_req, res) =>
+          reject(new Error(`unexpected ${res.statusCode}`)),
+        );
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('accepts a connection with the valid token (query string) and pushes hello', async () => {
+    // Query-string path is preserved for test-suite and tooling compatibility;
+    // prefer Authorization: Bearer in production clients (see ws.ts comment).
     const ws = new WebSocket(`ws://localhost:${port}/ws?token=${TOKEN}`);
+    const event = await new Promise<{ type: string }>((resolve, reject) => {
+      ws.on('message', (data) => resolve(JSON.parse(data.toString())));
+      ws.on('error', reject);
+      ws.on('unexpected-response', (_req, res) =>
+        reject(new Error(`unexpected ${res.statusCode}`)),
+      );
+    });
+    expect(event.type).toBe('hello');
+    ws.close();
+  });
+
+  it('accepts a connection with the valid token (Authorization header) and pushes hello', async () => {
+    // Preferred auth path: header does not appear in server logs or proxy URLs.
+    const ws = new WebSocket(`ws://localhost:${port}/ws`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
     const event = await new Promise<{ type: string }>((resolve, reject) => {
       ws.on('message', (data) => resolve(JSON.parse(data.toString())));
       ws.on('error', reject);
