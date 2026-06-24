@@ -200,10 +200,11 @@ stdout returned to the model), bounded by a timeout and a capped round count. A
 broken manifest is reported and skipped — one bad skill never takes the daemon
 down.
 
-Two skills ship committed in the repo:
+Three skills ship committed in the repo:
 
 - **`clock`** — returns the current date and time (ISO/UTC, local, and the host timezone); no config required.
 - **`websearch`** — issues a web search via a self-hosted [SearXNG](https://searxng.github.io/searxng/) instance and returns JSON results. Requires a reachable SearXNG at `SEARXNG_URL` (see `.env.example`) with the JSON API enabled. Independent of `MODEL_ENDPOINT`.
+- **`webfetch`** — fetches an `http`/`https` URL and returns its readable text (markup stripped); pairs with `websearch` (search → follow a result → read it). No config required.
 
 The manifest contract a built artifact must satisfy:
 

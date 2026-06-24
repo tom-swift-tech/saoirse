@@ -1,0 +1,20 @@
+{
+  "name": "webfetch",
+  "description": "Fetch a web page or URL and return its readable text. Use this when the user pastes a URL and wants its content, when you want to read an article or page in full (e.g. after websearch returns a result worth following), or when the user asks you to 'read' or 'summarise' something at a specific URL. Returns the page title, final URL (after redirects), and readable prose — scripts and markup stripped. Only http and https URLs are supported.",
+  "entry": "run.mjs",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "The http or https URL to fetch."
+      },
+      "maxChars": {
+        "type": "integer",
+        "description": "Maximum characters of body text to return (default 8000, max 20000)."
+      }
+    },
+    "required": ["url"]
+  },
+  "timeoutMs": 20000
+}
