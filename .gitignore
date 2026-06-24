@@ -15,3 +15,6 @@ engram-eval/
 
 # Tier-0 authored-change clones — pi-edited local branches, un-published, runtime-only.
 engram-author/
+
+# Proactivity scheduler's persisted jobs — runtime state.
+jobs.json

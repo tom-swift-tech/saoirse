@@ -33,6 +33,10 @@ import { parseEngramPin } from './proposals.js';
 import { createRouter } from './channels/http.js';
 import { attachWebSocket } from './channels/ws.js';
 import { attachNats, type NatsChannel } from './channels/nats.js';
+import { NtfyNotifier, NullNotifier } from './core/notifier.js';
+import { FileJobStore } from './core/job-store.js';
+import { Scheduler } from './core/scheduler.js';
+import { cronMatches } from './core/cron.js';
 // EventBus joins the core (EventSink) to the WS channel (EventSource) without
 // either knowing the other exists. Created once here, threaded to both sides.
 import { EventBus } from './core/events.js';
@@ -199,6 +203,20 @@ async function main(): Promise<void> {
   const events = new EventBus();
   const core = new SaoirseCore(memory, gateway, toolKit, skillKit, engramKit, events);
 
+  // Proactivity: scheduler + outbound notify. jobs.json is runtime state —
+  // it lives beside the daemon binary, not in the working dir, and is gitignored.
+  const notifier = config.ntfyUrl
+    ? new NtfyNotifier({ url: config.ntfyUrl })
+    : new NullNotifier();
+  const jobsPath = join(__dirname, '..', 'jobs.json');
+  const jobStore = new FileJobStore(jobsPath);
+  const scheduler = new Scheduler({
+    store: jobStore,
+    notifier,
+    runPrompt: (p) => core.handleMessage(p).then((r) => r.reply),
+    cronMatches,
+  });
+
   const version = pkg.version ?? '0.0.0';
   const server = http.createServer(
     createRouter({
@@ -211,6 +229,7 @@ async function main(): Promise<void> {
       engramAuthorSandbox: resolve(config.engramAuthorSandbox),
       token: config.token,
       events,
+      jobStore,
       status: async () => {
         // Probe model + embeddings concurrently so /status stays responsive
         // even when both are unreachable (each probe is bounded at ~1.5 s).
@@ -305,6 +324,7 @@ async function main(): Promise<void> {
   });
 
   server.listen(config.port, () => {
+    scheduler.start();
     console.log(
       `[saoirse] core listening on http://localhost:${config.port}  (HTTP + WS)`,
     );
@@ -331,10 +351,17 @@ async function main(): Promise<void> {
           : '(none committed)'
       }`,
     );
+    // Show the ntfy host (never a secret path/token) or 'none' when unset.
+    const ntfyDisplay = config.ntfyUrl
+      ? new URL(config.ntfyUrl).host
+      : 'none';
+    // Default tick is 60 000 ms (1 min); the scheduler controls the exact value.
+    console.log(`[saoirse] proactivity: scheduler on (60000ms tick), notify=${ntfyDisplay}`);
   });
 
   const shutdown = (): void => {
     console.log('[saoirse] shutting down…');
+    scheduler.stop();
     server.close();
     void (natsChannel?.close() ?? Promise.resolve()).finally(() => {
       memory.close();

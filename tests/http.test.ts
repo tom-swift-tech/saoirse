@@ -9,6 +9,7 @@ import { createRouter } from '../src/channels/http.js';
 import { SaoirseCore } from '../src/core/saoirse.js';
 import type { Memory, RecalledContext, Exchange } from '../src/core/memory.js';
 import type { ModelGateway } from '../src/core/model-gateway.js';
+import type { Job, JobStore } from '../src/core/jobs.js';
 
 class FakeMemory implements Memory {
   async recall(): Promise<RecalledContext> {
@@ -22,6 +23,21 @@ class FakeGateway implements ModelGateway {
   async complete(): Promise<string> {
     return 'pong';
   }
+}
+
+// In-memory JobStore — no dependency on FileJobStore or other agents' files.
+class FakeJobStore implements JobStore {
+  private jobs: Map<string, Job> = new Map();
+  list(): Job[] { return [...this.jobs.values()]; }
+  get(id: string): Job | undefined { return this.jobs.get(id); }
+  add(job: Job): void { this.jobs.set(job.id, job); }
+  update(job: Job): void { this.jobs.set(job.id, job); }
+  remove(id: string): boolean {
+    if (!this.jobs.has(id)) return false;
+    this.jobs.delete(id);
+    return true;
+  }
+  reset(): void { this.jobs.clear(); }
 }
 
 const proposalsDir = join(
@@ -39,10 +55,14 @@ const stubStatus = async () => ({
 });
 
 // Two server fixtures: one with no token (open routes only), one with a token.
+// A third fixture wires in the fake job store for job-route tests.
 let server: http.Server;
 let base: string;
 let tokenServer: http.Server;
 let tokenBase: string;
+let jobServer: http.Server;
+let jobBase: string;
+const fakeJobStore = new FakeJobStore();
 const VALID_TOKEN = 'correct-horse-battery';
 
 beforeAll(async () => {
@@ -81,11 +101,30 @@ beforeAll(async () => {
   );
   await new Promise<void>((resolve) => tokenServer.listen(0, resolve));
   tokenBase = `http://localhost:${(tokenServer.address() as AddressInfo).port}`;
+
+  // Job-routes fixture: token-enabled + a real (in-memory) job store.
+  jobServer = http.createServer(
+    createRouter({
+      core,
+      proposalsDir,
+      skillsDir: proposalsDir,
+      sandboxDir: proposalsDir,
+      packageJsonPath: proposalsDir,
+      engramEvalSandbox: proposalsDir,
+      engramAuthorSandbox: proposalsDir,
+      token: VALID_TOKEN,
+      status: stubStatus,
+      jobStore: fakeJobStore,
+    }),
+  );
+  await new Promise<void>((resolve) => jobServer.listen(0, resolve));
+  jobBase = `http://localhost:${(jobServer.address() as AddressInfo).port}`;
 });
 
 afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await new Promise<void>((resolve) => tokenServer.close(() => resolve()));
+  await new Promise<void>((resolve) => jobServer.close(() => resolve()));
 });
 
 describe('HTTP channel', () => {
@@ -183,5 +222,121 @@ describe('HTTP channel', () => {
     expect(res.status).toBe(413);
     const body = await res.json();
     expect(typeof body.error).toBe('string');
+  });
+});
+
+describe('Job routes', () => {
+  // Reset store between tests so they are independent.
+  beforeAll(() => fakeJobStore.reset());
+
+  const authHeader = { authorization: `Bearer ${VALID_TOKEN}` };
+
+  it('POST /jobs → 401 without token', async () => {
+    const res = await fetch(`${jobBase}/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        schedule: { kind: 'cron', expr: '* * * * *' },
+        action: { type: 'notify', text: 'hello' },
+      }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /jobs → 400 on malformed schedule', async () => {
+    const res = await fetch(`${jobBase}/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...authHeader },
+      body: JSON.stringify({
+        schedule: { kind: 'at', iso: 'not-a-date' },
+        action: { type: 'notify', text: 'hello' },
+      }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /jobs → 400 on malformed action', async () => {
+    const res = await fetch(`${jobBase}/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...authHeader },
+      body: JSON.stringify({
+        schedule: { kind: 'cron', expr: '0 9 * * *' },
+        action: { type: 'notify', text: '' },
+      }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /jobs creates a job and returns it', async () => {
+    fakeJobStore.reset();
+    const res = await fetch(`${jobBase}/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...authHeader },
+      body: JSON.stringify({
+        schedule: { kind: 'cron', expr: '0 9 * * *' },
+        action: { type: 'notify', text: 'good morning' },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const job = await res.json();
+    expect(typeof job.id).toBe('string');
+    expect(job.schedule).toEqual({ kind: 'cron', expr: '0 9 * * *' });
+    expect(job.action).toEqual({ type: 'notify', text: 'good morning' });
+    expect(job.enabled).toBe(true);
+    expect(typeof job.createdAt).toBe('string');
+  });
+
+  it('GET /jobs → 401 without token', async () => {
+    const res = await fetch(`${jobBase}/jobs`);
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /jobs lists created jobs', async () => {
+    const res = await fetch(`${jobBase}/jobs`, { headers: authHeader });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.count).toBe(1);
+    expect(Array.isArray(body.jobs)).toBe(true);
+    expect(body.jobs[0].action.text).toBe('good morning');
+  });
+
+  it('DELETE /jobs/:id removes the job', async () => {
+    // Get the id from the store.
+    const listRes = await fetch(`${jobBase}/jobs`, { headers: authHeader });
+    const { jobs } = await listRes.json();
+    const id = jobs[0].id;
+
+    const res = await fetch(`${jobBase}/jobs/${id}`, {
+      method: 'DELETE',
+      headers: authHeader,
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).removed).toBe(id);
+  });
+
+  it('DELETE /jobs/:id → 404 when absent', async () => {
+    const res = await fetch(`${jobBase}/jobs/nonexistent-id`, {
+      method: 'DELETE',
+      headers: authHeader,
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /jobs with enabled:false stores disabled job', async () => {
+    fakeJobStore.reset();
+    const res = await fetch(`${jobBase}/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...authHeader },
+      body: JSON.stringify({
+        schedule: { kind: 'at', iso: '2030-01-01T00:00:00Z' },
+        action: { type: 'prompt', prompt: 'summarise today' },
+        enabled: false,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const job = await res.json();
+    expect(job.enabled).toBe(false);
+    expect(job.schedule.kind).toBe('at');
+    expect(job.action.type).toBe('prompt');
   });
 });

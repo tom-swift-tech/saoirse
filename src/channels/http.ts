@@ -33,6 +33,7 @@ import {
 // EventSink is the ONLY events type HTTP depends on — publish only, no
 // subscribe. The channel knows nothing about how events are delivered onward.
 import type { EventSink } from '../core/events.js';
+import type { JobStore, Schedule, JobAction } from '../core/jobs.js';
 
 /** Per-skill grant summary emitted by /status — names and flags only, never values. */
 export interface SkillPermissionAudit {
@@ -81,6 +82,9 @@ export interface HttpDeps {
   /** Push-event sink for proposal state changes. Optional — omit in tests that
    *  don't care about events (all existing tests stay unchanged). */
   events?: EventSink;
+  /** Persistent job store for the proactivity scheduler. Optional — omit in
+   *  tests that don't exercise job routes. */
+  jobStore?: JobStore;
 }
 
 export type Router = (
@@ -258,6 +262,74 @@ export function createRouter(deps: HttpDeps): Router {
           }
           throw err;
         }
+      }
+
+      // ---- proactivity: job CRUD (token-gated) ----------------------------
+
+      if (deps.jobStore && method === 'POST' && path === '/jobs') {
+        if (!authorized(req, deps.token)) return unauthorized(res);
+        const body = (await readJsonBody(req)) as {
+          schedule?: unknown;
+          action?: unknown;
+          enabled?: unknown;
+        };
+        // Validate schedule: {kind:'at',iso} or {kind:'cron',expr}
+        const sched = body.schedule as Record<string, unknown> | undefined;
+        if (!sched || typeof sched !== 'object') {
+          return send(res, 400, { error: '"schedule" is required' });
+        }
+        if (sched.kind === 'at') {
+          if (typeof sched.iso !== 'string' || isNaN(Date.parse(sched.iso as string))) {
+            return send(res, 400, { error: 'schedule.iso must be a parseable ISO date string' });
+          }
+        } else if (sched.kind === 'cron') {
+          if (typeof sched.expr !== 'string' || sched.expr.trim() === '') {
+            return send(res, 400, { error: 'schedule.expr must be a non-empty string' });
+          }
+        } else {
+          return send(res, 400, { error: 'schedule.kind must be "at" or "cron"' });
+        }
+        // Validate action: {type:'notify',text} or {type:'prompt',prompt}
+        const act = body.action as Record<string, unknown> | undefined;
+        if (!act || typeof act !== 'object') {
+          return send(res, 400, { error: '"action" is required' });
+        }
+        if (act.type === 'notify') {
+          if (typeof act.text !== 'string' || act.text.trim() === '') {
+            return send(res, 400, { error: 'action.text must be a non-empty string' });
+          }
+        } else if (act.type === 'prompt') {
+          if (typeof act.prompt !== 'string' || act.prompt.trim() === '') {
+            return send(res, 400, { error: 'action.prompt must be a non-empty string' });
+          }
+        } else {
+          return send(res, 400, { error: 'action.type must be "notify" or "prompt"' });
+        }
+        const { randomUUID } = await import('node:crypto');
+        const job = {
+          id: randomUUID().slice(0, 8),
+          schedule: sched as Schedule,
+          action: act as JobAction,
+          enabled: body.enabled !== false,
+          createdAt: new Date().toISOString(),
+        };
+        deps.jobStore.add(job);
+        return send(res, 200, job);
+      }
+
+      if (deps.jobStore && method === 'GET' && path === '/jobs') {
+        if (!authorized(req, deps.token)) return unauthorized(res);
+        const jobs = deps.jobStore.list();
+        return send(res, 200, { count: jobs.length, jobs });
+      }
+
+      const jobDeleteMatch = /^\/jobs\/([^/]+)$/.exec(path);
+      if (deps.jobStore && method === 'DELETE' && jobDeleteMatch) {
+        if (!authorized(req, deps.token)) return unauthorized(res);
+        const [, id] = jobDeleteMatch;
+        const removed = deps.jobStore.remove(id);
+        if (!removed) return send(res, 404, { error: `job not found: ${id}` });
+        return send(res, 200, { removed: id });
       }
 
       return send(res, 404, { error: 'not found' });

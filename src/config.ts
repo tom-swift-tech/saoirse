@@ -51,6 +51,10 @@ export interface SaoirseConfig {
    *  embeddings can target different services; a mismatch degrades recall
    *  silently without this probe. Only used in 'ollama' embedding mode. */
   engramEmbeddingsUrl: string;
+  /** Full ntfy topic URL for outbound proactive notifications (NTFY_URL).
+   *  Undefined when unset — notifications log to the console only.
+   *  Prefer a Tailscale MagicDNS name, e.g. http://starbase/saoirse. */
+  ntfyUrl: string | undefined;
 }
 
 export type EmbeddingMode = 'local' | 'ollama' | 'offline';
@@ -82,6 +86,7 @@ export function loadConfig(
       parseInt(env.ENGRAM_AUTHOR_TIMEOUT_MS ?? '900000', 10) || 900_000,
     engramPushRemote: env.ENGRAM_PUSH_REMOTE || undefined,
     engramEmbeddingsUrl: env.ENGRAM_EMBEDDINGS_URL ?? 'http://localhost:11434',
+    ntfyUrl: env.NTFY_URL || undefined,
   };
 }
 
