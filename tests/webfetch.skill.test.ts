@@ -89,7 +89,10 @@ function runSkill(
       ['skills/webfetch/run.mjs'],
       {
         cwd: 'D:/projects/saoirse',
-        env: { ...process.env },
+        // The stub server is on loopback; the SSRF guard blocks loopback by
+        // default. This test-only flag permits it — the daemon never grants it
+        // (deny-by-default skill env), so production stays protected.
+        env: { ...process.env, WEBFETCH_ALLOW_PRIVATE_HOSTS: '1' },
         stdio: ['pipe', 'pipe', 'pipe'],
       },
     );
@@ -135,6 +138,30 @@ describe('webfetch skill', () => {
     const { stderr, code } = await runSkill({ url: `http://127.0.0.1:${port}/notfound` });
     expect(code).not.toBe(0);
     expect(stderr).toMatch(/404/);
+  });
+
+  it('blocks SSRF: refuses a loopback/private address when not explicitly allowed', async () => {
+    // Production posture: the flag is NOT set, so the guard must reject loopback.
+    const { stderr, code } = await new Promise<{
+      stdout: string;
+      stderr: string;
+      code: number | null;
+    }>((resolve) => {
+      const child = spawn(process.execPath, ['skills/webfetch/run.mjs'], {
+        cwd: 'D:/projects/saoirse',
+        env: { ...process.env, WEBFETCH_ALLOW_PRIVATE_HOSTS: '' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d: Buffer) => (stdout += d));
+      child.stderr.on('data', (d: Buffer) => (stderr += d));
+      child.on('close', (code) => resolve({ stdout, stderr, code }));
+      child.stdin.write(JSON.stringify({ url: `http://127.0.0.1:${port}/` }));
+      child.stdin.end();
+    });
+    expect(code).toBe(1);
+    expect(stderr).toMatch(/SSRF|non-public/);
   });
 
   it('exits non-zero with a clear message for a non-http scheme', async () => {
@@ -200,7 +227,7 @@ describe('webfetch skill', () => {
         ['skills/webfetch/run.mjs'],
         {
           cwd: 'D:/projects/saoirse',
-          env: { ...process.env },
+          env: { ...process.env, WEBFETCH_ALLOW_PRIVATE_HOSTS: '1' },
           stdio: ['pipe', 'pipe', 'pipe'],
         },
       );

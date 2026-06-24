@@ -6,15 +6,23 @@
 // Exit 0 → stdout is the page text (title + final URL + body).
 // Exit 1 → stderr describes the failure; the runner surfaces it to the model.
 //
-// Security: only http: and https: schemes are allowed. file:, data:, and other
-// schemes are rejected here at the entry point. A full egress policy
-// (allowlist, proxy, per-request signing) is deferred to Primitive-1/proxy work.
+// Security: only http:/https: schemes are allowed, AND the host must resolve to
+// a public address — safeFetch (ssrf-guard.mjs) blocks loopback/link-local/
+// private/CGNAT/multicast targets (cloud metadata, the daemon's own services,
+// Ollama, NATS, tailnet peers) and re-validates every redirect hop. A broader
+// egress policy (host allowlist, forward proxy) is still the Primitive-1 work.
 
 import { extractReadable } from './extract.mjs';
+import { safeFetch } from './ssrf-guard.mjs';
 
 const DEFAULT_MAX_CHARS = 8_000;
 const MAX_CHARS_CAP = 20_000;
 const FETCH_TIMEOUT_MS = 10_000;
+
+// Test-only: lets the integration suite hit a localhost stub server. Safe in
+// production by construction — the skill runner grants a deny-by-default env and
+// the daemon never passes this key, so the live skill can never enable it.
+const ALLOW_PRIVATE = process.env.WEBFETCH_ALLOW_PRIVATE_HOSTS === '1';
 
 // Read all of stdin, stripping a leading UTF-8 BOM that PowerShell may emit.
 let raw = '';
@@ -70,20 +78,22 @@ async function run(url, maxChars) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
+  // safeFetch validates the scheme AND the resolved address (SSRF guard) on the
+  // initial URL and every redirect hop, returning the final response + URL.
   let resp;
+  let finalUrl;
   try {
-    resp = await fetch(url, {
+    ({ response: resp, finalUrl } = await safeFetch(url, {
       signal: controller.signal,
       // Some sites 403 on a missing or bot-like UA; use a plain browser string.
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; webfetch-skill/1.0)' },
-      // follow redirects is the default for fetch; explicit here for clarity.
-      redirect: 'follow',
-    });
+      allowPrivate: ALLOW_PRIVATE,
+    }));
   } catch (err) {
     const reason = err.name === 'AbortError'
       ? `timed out after ${FETCH_TIMEOUT_MS}ms`
       : err.message;
-    process.stderr.write(`webfetch: could not reach ${url}: ${reason}\n`);
+    process.stderr.write(`webfetch: could not fetch ${url}: ${reason}\n`);
     process.exit(1);
   } finally {
     clearTimeout(timer);
@@ -106,9 +116,6 @@ async function run(url, maxChars) {
     process.stderr.write(`webfetch: failed to read response body: ${err.message}\n`);
     process.exit(1);
   }
-
-  // Use the final URL after any redirects for the header line.
-  const finalUrl = resp.url ?? url;
 
   let title = '';
   let text;
