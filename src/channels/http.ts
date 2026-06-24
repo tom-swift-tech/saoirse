@@ -30,6 +30,9 @@ import {
   rejectEngramProposal,
   rejectProposal,
 } from '../proposals.js';
+// EventSink is the ONLY events type HTTP depends on — publish only, no
+// subscribe. The channel knows nothing about how events are delivered onward.
+import type { EventSink } from '../core/events.js';
 
 export interface StatusResponse {
   model: { name: string; endpoint: string; reachable: boolean };
@@ -57,6 +60,9 @@ export interface HttpDeps {
   token: string | undefined;
   /** Status provider (model name/endpoint/reachability + version). Built in index.ts. */
   status: () => Promise<StatusResponse>;
+  /** Push-event sink for proposal state changes. Optional — omit in tests that
+   *  don't care about events (all existing tests stay unchanged). */
+  events?: EventSink;
 }
 
 export type Router = (
@@ -177,6 +183,7 @@ export function createRouter(deps: HttpDeps): Router {
             if (tier === 0 && kind === 'author') {
               // Authored changes are not re-pinnable (local SHA, no remote);
               // publishing is the deferred step. Fail loud, not silently.
+              // NOTE: no event emitted here — nothing was resolved.
               return send(res, 501, {
                 error:
                   'authored changes are not publishable yet — the publish step ' +
@@ -189,6 +196,8 @@ export function createRouter(deps: HttpDeps): Router {
                 packageJsonPath: deps.packageJsonPath,
                 evalSandboxRoot: deps.engramEvalSandbox,
               });
+              // Tier-0 repin approved: emitted after the write succeeds.
+              deps.events?.publish({ type: 'proposal.resolved', id, action: 'approved' });
               return send(res, 200, { repinned: result.candidateSha, ...result });
             }
             const result = await approveProposal(id, {
@@ -196,6 +205,8 @@ export function createRouter(deps: HttpDeps): Router {
               skillsDir: deps.skillsDir,
               sandboxRoot: deps.sandboxDir,
             });
+            // Tier-1 tool approved: emitted after the write succeeds.
+            deps.events?.publish({ type: 'proposal.resolved', id, action: 'approved' });
             return send(res, 200, { promoted: result.toolName, ...result });
           }
           if (tier === 0 && kind === 'author') {
@@ -203,6 +214,8 @@ export function createRouter(deps: HttpDeps): Router {
               proposalsDir: deps.proposalsDir,
               authorSandboxRoot: deps.engramAuthorSandbox,
             });
+            // Tier-0 author rejected: emitted after the discard succeeds.
+            deps.events?.publish({ type: 'proposal.resolved', id, action: 'rejected' });
             return send(res, 200, { rejected: result.id });
           }
           if (tier === 0) {
@@ -210,12 +223,16 @@ export function createRouter(deps: HttpDeps): Router {
               proposalsDir: deps.proposalsDir,
               evalSandboxRoot: deps.engramEvalSandbox,
             });
+            // Tier-0 repin rejected: emitted after the discard succeeds.
+            deps.events?.publish({ type: 'proposal.resolved', id, action: 'rejected' });
             return send(res, 200, { rejected: result.id });
           }
           const result = await rejectProposal(id, {
             proposalsDir: deps.proposalsDir,
             sandboxRoot: deps.sandboxDir,
           });
+          // Tier-1 tool rejected: emitted after the discard succeeds.
+          deps.events?.publish({ type: 'proposal.resolved', id, action: 'rejected' });
           return send(res, 200, { rejected: result.id });
         } catch (err) {
           if ((err as NodeJS.ErrnoException).code === 'ENOENT') {

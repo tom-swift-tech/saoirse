@@ -18,6 +18,16 @@ import {
 import { resolveInside } from '../src/core/sandbox.js';
 import type { Memory } from '../src/core/memory.js';
 import type { ModelGateway } from '../src/core/model-gateway.js';
+import type { EventSink, SaoirseEvent } from '../src/core/events.js';
+
+/** Minimal in-memory EventSink that records every published event. */
+function fakeEventSink(): EventSink & { events: SaoirseEvent[] } {
+  const events: SaoirseEvent[] = [];
+  return {
+    events,
+    publish(event: SaoirseEvent) { events.push(event); },
+  };
+}
 
 const TOKEN = 'privileged-token';
 
@@ -61,6 +71,8 @@ let skillsDir: string;
 let sandboxRoot: string;
 let server: http.Server;
 let base: string;
+// Shared sink so event assertions can reach events fired inside the router.
+let sink: EventSink & { events: SaoirseEvent[] };
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'saoirse-http-tier1-'));
@@ -68,6 +80,7 @@ beforeEach(async () => {
   skillsDir = join(root, 'skills');
   sandboxRoot = join(root, 'sandbox');
   for (const d of [proposalsDir, skillsDir, sandboxRoot]) mkdirSync(d);
+  sink = fakeEventSink();
 
   const core = new SaoirseCore(new FakeMemory(), new FakeGateway(), {
     builder: fauxBuilder(sandboxRoot),
@@ -80,6 +93,7 @@ beforeEach(async () => {
       skillsDir,
       sandboxDir: sandboxRoot,
       token: TOKEN,
+      events: sink,
     }),
   );
   await new Promise<void>((r) => server.listen(0, r));
@@ -162,5 +176,41 @@ describe('POST /proposals/:id/reject (token-gated)', () => {
     const q = await (await fetch(`${base}/proposals`)).json();
     expect(q.count).toBe(0);
     expect(readdirSync(skillsDir)).toHaveLength(0);
+  });
+});
+
+describe('proposal.resolved events via HTTP', () => {
+  it('emits proposal.resolved approved after a successful tier-1 approve', async () => {
+    const id = await build();
+    sink.events.length = 0; // clear the queued event from the build
+    const res = await post(`/proposals/${id}/approve`, undefined, TOKEN);
+    expect(res.status).toBe(200);
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]).toMatchObject({
+      type: 'proposal.resolved',
+      id,
+      action: 'approved',
+    });
+  });
+
+  it('emits proposal.resolved rejected after a successful tier-1 reject', async () => {
+    const id = await build();
+    sink.events.length = 0; // clear the queued event from the build
+    const res = await post(`/proposals/${id}/reject`, undefined, TOKEN);
+    expect(res.status).toBe(200);
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]).toMatchObject({
+      type: 'proposal.resolved',
+      id,
+      action: 'rejected',
+    });
+  });
+
+  it('does NOT emit when the token is missing (request rejected before action)', async () => {
+    const id = await build();
+    sink.events.length = 0;
+    await post(`/proposals/${id}/approve`); // no token
+    // no resolved event — the gate rejected before any action was taken
+    expect(sink.events.filter((e) => e.type === 'proposal.resolved')).toHaveLength(0);
   });
 });

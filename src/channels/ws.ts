@@ -2,9 +2,8 @@
 // ws.ts — North-facing WebSocket channel. A THIN transport over the core.
 //
 // The core pushes (ambient/streaming). Auth token required on connect; the
-// listener is Tailscale-scoped. For the skeleton a connected client just
-// receives a hello + heartbeat — proof the push path exists. Real dashboard
-// events come later.
+// listener is Tailscale-scoped. Authenticated clients receive a hello on
+// connect, a heartbeat every 30 s, and live core events broadcast as JSON.
 //
 // Auth fails closed: if no token is configured, every connection is rejected.
 // Token may be supplied via Authorization: Bearer (preferred), the
@@ -12,18 +11,25 @@
 // path is preserved because the existing ws-auth test suite exercises it;
 // prefer the header path in clients because query strings appear in proxy
 // logs and server access logs.
+//
+// Event broadcast: when an EventSource is provided, the channel subscribes
+// once at attach time and fans each SaoirseEvent out to every OPEN client.
+// Per-socket sends are guarded so a dead socket cannot throw out of the loop.
+// The subscription is released on wss 'close' to avoid a leak.
 // =============================================================================
 
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, Server } from 'http';
 import type { Duplex } from 'stream';
 import { WebSocketServer, type WebSocket } from 'ws';
+import type { EventSource, SaoirseEvent } from '../core/events.js';
 
 const WS_PATH = '/ws';
 const HEARTBEAT_MS = 30_000;
 
 export interface WsDeps {
   token: string | undefined;
+  events?: EventSource;
 }
 
 export function attachWebSocket(server: Server, deps: WsDeps): WebSocketServer {
@@ -62,6 +68,27 @@ export function attachWebSocket(server: Server, deps: WsDeps): WebSocketServer {
 
     socket.on('close', () => clearInterval(heartbeat));
   });
+
+  // Subscribe once at attach time; broadcast each core event to every OPEN
+  // client. Per-socket sends are individually guarded — a dead or slow socket
+  // must not interrupt delivery to the rest of the set.
+  if (deps.events) {
+    const unsubscribe = deps.events.subscribe((event: SaoirseEvent) => {
+      const payload = JSON.stringify(event);
+      for (const client of wss.clients) {
+        if (client.readyState === client.OPEN) {
+          try {
+            client.send(payload);
+          } catch (err) {
+            console.error('[saoirse/ws] failed to send event to client:', err);
+          }
+        }
+      }
+    });
+
+    // Release the subscription when the server shuts down.
+    wss.on('close', unsubscribe);
+  }
 
   return wss;
 }

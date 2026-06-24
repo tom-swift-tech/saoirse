@@ -31,6 +31,16 @@ import {
 } from '../src/proposals.js';
 import type { Memory } from '../src/core/memory.js';
 import type { ModelGateway } from '../src/core/model-gateway.js';
+import type { EventSink, SaoirseEvent } from '../src/core/events.js';
+
+/** Minimal in-memory EventSink that records every published event. */
+function fakeEventSink(): EventSink & { events: SaoirseEvent[] } {
+  const events: SaoirseEvent[] = [];
+  return {
+    events,
+    publish(event: SaoirseEvent) { events.push(event); },
+  };
+}
 
 class FakeMemory implements Memory {
   async recall() {
@@ -109,6 +119,52 @@ describe('handleBuildRequest — accretes, never promotes', () => {
     expect(record.tier).toBe(1);
     // skills/ is untouched — nothing went live
     expect(readdirSync(skillsDir)).toHaveLength(0);
+  });
+
+  it('emits proposal.queued (tier 1) after a successful build', async () => {
+    // Inject a fake sink so we can assert the event without a real transport.
+    const sink = fakeEventSink();
+    const core = new SaoirseCore(
+      new FakeMemory(),
+      new FakeGateway(),
+      { builder: fauxBuilder(sandboxRoot), proposalsDir },
+      undefined,
+      undefined,
+      sink,
+    );
+
+    const outcome = await core.handleBuildRequest({ name: 'weather', description: 'd' });
+    if (!outcome.ok) throw new Error('build failed in test');
+
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]).toMatchObject({
+      type: 'proposal.queued',
+      id: outcome.proposalId,
+      tier: 1,
+    });
+    // kind is not set for tier-1 tool proposals
+    expect((sink.events[0] as { kind?: unknown }).kind).toBeUndefined();
+  });
+
+  it('does NOT emit when the build fails', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const sink = fakeEventSink();
+    const failing: ToolBuilder = {
+      async build() { throw new Error('pi blew up'); },
+    };
+    const core = new SaoirseCore(
+      new FakeMemory(),
+      new FakeGateway(),
+      { builder: failing, proposalsDir },
+      undefined,
+      undefined,
+      sink,
+    );
+
+    await core.handleBuildRequest({ name: 'x', description: 'y' });
+
+    expect(sink.events).toHaveLength(0);
+    spy.mockRestore();
   });
 
   it('logs a build failure and leaves capabilities + skills unchanged (no swallow)', async () => {

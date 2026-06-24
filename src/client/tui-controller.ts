@@ -167,6 +167,11 @@ export class DashboardController {
       this.state.pushLog.splice(0, this.state.pushLog.length - PUSH_LOG_CAP);
     }
     this.changed();
+    // Proposal events signal the queue changed — re-fetch immediately so the
+    // Proposals pane reflects the new state without waiting for the poll tick.
+    if (event.type.startsWith('proposal.')) {
+      void this.refreshProposals();
+    }
   }
 
   setConnected(connected: boolean): void {

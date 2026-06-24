@@ -163,6 +163,82 @@ describe('push log', () => {
   });
 });
 
+describe('proposal push events', () => {
+  it('proposal.queued triggers a GET /proposals re-fetch and updates the pane', async () => {
+    // First call: initial empty state; second call: after push event arrives.
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ count: 0, proposals: [] }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ count: 1, proposals: [{ name: 'new-tool.json' }] }),
+      ) as FetchLike;
+    const ctrl = controller(fetchImpl);
+
+    await ctrl.refreshProposals();
+    expect(ctrl.proposalsPane()).toContain('Proposals: 0 pending');
+
+    // Simulate the daemon pushing a proposal.queued event over WS.
+    ctrl.pushEvent({ type: 'proposal.queued', id: 'abc123', tier: 1 });
+    // refreshProposals is async; wait for it to settle.
+    await vi.waitFor(() =>
+      expect(ctrl.proposalsPane()).toContain('Proposals: 1 pending'),
+    );
+    expect(ctrl.proposalsPane().some((l) => l.includes('new-tool.json'))).toBe(
+      true,
+    );
+    // /proposals must have been called twice total
+    expect(
+      (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([url]: [string]) => (url as string).includes('/proposals'),
+      ).length,
+    ).toBe(2);
+  });
+
+  it('proposal.resolved also triggers a re-fetch', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ count: 1, proposals: [{ name: 'pending.json' }] }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ count: 0, proposals: [] }),
+      ) as FetchLike;
+    const ctrl = controller(fetchImpl);
+
+    await ctrl.refreshProposals();
+    expect(ctrl.proposalsPane()).toContain('Proposals: 1 pending');
+
+    ctrl.pushEvent({ type: 'proposal.resolved', id: 'abc123', action: 'approved' });
+    await vi.waitFor(() =>
+      expect(ctrl.proposalsPane()).toContain('Proposals: 0 pending'),
+    );
+  });
+
+  it('non-proposal push events do NOT trigger an extra /proposals fetch', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({ count: 0, proposals: [] }),
+      ) as FetchLike;
+    const ctrl = controller(fetchImpl);
+
+    await ctrl.refreshProposals();
+    const callsBefore = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock
+      .calls.length;
+
+    ctrl.pushEvent({ type: 'heartbeat' });
+    ctrl.pushEvent({ type: 'echo', payload: 'ping' });
+
+    // Give any rogue async work a chance to run.
+    await new Promise((r) => setTimeout(r, 10));
+    const callsAfter = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock
+      .calls.length;
+    expect(callsAfter).toBe(callsBefore);
+  });
+});
+
 describe('TUI client boundary', () => {
   it('imports only the wire client + pi-tui + node builtins', () => {
     const clientDir = join(

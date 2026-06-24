@@ -31,6 +31,9 @@ import { parseEngramPin } from './proposals.js';
 import { createRouter } from './channels/http.js';
 import { attachWebSocket } from './channels/ws.js';
 import { attachNats, type NatsChannel } from './channels/nats.js';
+// EventBus joins the core (EventSink) to the WS channel (EventSource) without
+// either knowing the other exists. Created once here, threaded to both sides.
+import { EventBus } from './core/events.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const proposalsDir = join(__dirname, '..', 'proposals');
@@ -175,7 +178,10 @@ async function main(): Promise<void> {
     );
   }
 
-  const core = new SaoirseCore(memory, gateway, toolKit, skillKit, engramKit);
+  // One bus for the whole daemon: core publishes (EventSink), WS channel
+  // subscribes (EventSource). The same instance serves both.
+  const events = new EventBus();
+  const core = new SaoirseCore(memory, gateway, toolKit, skillKit, engramKit, events);
 
   const version = pkg.version ?? '0.0.0';
   const server = http.createServer(
@@ -188,6 +194,7 @@ async function main(): Promise<void> {
       engramEvalSandbox: resolve(config.engramEvalSandbox),
       engramAuthorSandbox: resolve(config.engramAuthorSandbox),
       token: config.token,
+      events,
       status: async () => {
         // Probe model + embeddings concurrently so /status stays responsive
         // even when both are unreachable (each probe is bounded at ~1.5 s).
@@ -218,7 +225,9 @@ async function main(): Promise<void> {
       },
     }),
   );
-  attachWebSocket(server, { token: config.token });
+  // attachWebSocket is being updated (by the WS agent) to accept events as an
+  // EventSource — the bus is both sink and source, so the same instance works.
+  attachWebSocket(server, { token: config.token, events });
 
   // East-west fabric: only joined when NATS_URL is configured (no fabric, no
   // import). The nats package is loaded lazily so a daemon outside the fabric

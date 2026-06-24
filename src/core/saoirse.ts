@@ -32,6 +32,9 @@ import {
   type EngramProposalRecord,
   type ToolProposalRecord,
 } from '../proposals.js';
+// EventSink is the ONLY events type the core depends on — it can publish, it
+// knows nothing about WebSockets or any other transport (SYSTEM.md seams).
+import type { EventSink } from './events.js';
 
 const SYSTEM_PROMPT =
   'You are Saoirse, a single persistent personal AI assistant for Tom Swift, ' +
@@ -125,6 +128,9 @@ export class SaoirseCore {
     private readonly toolKit?: ToolKit,
     private readonly skillKit?: SkillKit,
     private readonly engramKit?: EngramKit,
+    // The EventSink seam: the core publishes proposal state changes through this
+    // and never knows what consumes them (WS, log, test spy — all the same here).
+    private readonly events?: EventSink,
   ) {}
 
   /** Names of the committed skills the model can call this run. */
@@ -269,6 +275,9 @@ export class SaoirseCore {
       testOutput: result.testOutput,
     };
     await writeProposal(this.toolKit.proposalsDir, record);
+    // Tier-1 proposal queued: the dashboard (or any subscriber) can now show a
+    // pending badge without polling. Emitted only after the write succeeds.
+    this.events?.publish({ type: 'proposal.queued', id: record.id, tier: 1 });
     return {
       ok: true,
       proposalId: record.id,
@@ -322,6 +331,9 @@ export class SaoirseCore {
       testOutput: result.testOutput,
     };
     await writeProposal(this.engramKit.proposalsDir, record);
+    // Tier-0 repin proposal queued: kind is 'repin' — lets subscribers
+    // distinguish from authored changes without reading the proposal file.
+    this.events?.publish({ type: 'proposal.queued', id: record.id, tier: 0, kind: record.kind });
     return {
       ok: true,
       proposalId: record.id,
@@ -379,6 +391,9 @@ export class SaoirseCore {
       testOutput: result.testOutput,
     };
     await writeProposal(this.engramKit.proposalsDir, record);
+    // Tier-0 author proposal queued: kind is 'author' — lets subscribers
+    // distinguish from repin proposals without reading the proposal file.
+    this.events?.publish({ type: 'proposal.queued', id: record.id, tier: 0, kind: record.kind });
     return {
       ok: true,
       proposalId: record.id,
