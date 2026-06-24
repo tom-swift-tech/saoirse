@@ -17,12 +17,12 @@ memory health, and the not-yet-live push plane.
       target. `ENGRAM_EMBEDDINGS_URL` config (default localhost:11434), probed
       only in `ollama` mode, run concurrently with the model probe.
 
-- [~] **WS push plane is still a skeleton.** IN PROGRESS (feat/ws-push-events).
-      `/ws` only sends hello + heartbeat + echo; the TUI gets status via HTTP
-      polling. "The core pushes (ambient updates, dashboard waking)" is
-      architecture, not yet behavior — the async half of the design carries no
-      real events. Wiring real push events (proposal.queued / proposal.resolved)
-      through the WS channel via a transport-agnostic core event bus.
+- [x] **WS push plane is still a skeleton.** DONE (3c2bd68) — a
+      transport-agnostic core event bus (`core/events.ts`) now drives real WS
+      push: `proposal.queued` (emitted by the core) and `proposal.resolved`
+      (emitted by the approve/reject routes) are broadcast as JSON to every
+      authed client; the TUI re-fetches `/proposals` on receipt (polling kept as
+      fallback). All four run-model gaps are now closed.
 
 - [x] **`.env` loads only from cwd.** DONE (787f350) — `loadDotenv()` now
       resolves `.env` from the package root (via `import.meta.url`) regardless of
