@@ -6,32 +6,27 @@ Operational-edge gaps between "always-on reactive daemon" intent and what's in
 the tree. Logic is sound; these are about staying up, telling the truth about
 memory health, and the not-yet-live push plane.
 
-- [ ] **Supervision for "always-on".** No systemd unit / pm2 config / restart
-      policy is committed. `main().catch(process.exit(1))` and the `EADDRINUSE`
-      guard both terminate the process with nothing to bring it back after a
-      crash or reboot. Add a committed service unit + restart policy and document
-      the always-on deploy. *(biggest intent↔tree gap)*
+- [x] **Supervision for "always-on".** ~~No systemd unit / pm2 config / restart
+      policy is committed.~~ DONE (787f350) — `docs/DEPLOY.md` documents systemd
+      (Restart=always) + Windows (pm2/NSSM/Task Scheduler) supervision with a
+      sample unit. Actually installing the unit on a host remains an ops action.
 
-- [ ] **Embedder health is silent — close the Tier-0-shaped footgun.** In
-      `ollama` mode, embeddings target Engram's own URL (`localhost:11434`)
-      independent of `MODEL_ENDPOINT` (`.env.example:40`). If Ollama isn't
-      co-located, chat works while embeddings silently fail and recall quietly
-      degrades — no error tripped. Add an embedder health probe to `GET /status`
-      and the boot banner (mirror the existing `probeReachable` for chat). The
-      governance gates protect the memory *engine source*; nothing yet protects
-      the running *embedding pipeline's* health.
+- [x] **Embedder health is silent — close the Tier-0-shaped footgun.** DONE
+      (787f350) — `probeEmbeddingsReachable` added; `GET /status` now carries
+      `embeddings: { mode, reachable }` and the boot banner shows the embeddings
+      target. `ENGRAM_EMBEDDINGS_URL` config (default localhost:11434), probed
+      only in `ollama` mode, run concurrently with the model probe.
 
-- [ ] **WS push plane is still a skeleton.** `/ws` only sends hello + heartbeat +
-      echo; the TUI gets status via HTTP polling. "The core pushes (ambient
-      updates, dashboard waking)" is architecture, not yet behavior — the async
-      half of the design carries no real events. Wire real push events
-      (e.g. proposal-queued, status-changed) through the WS channel.
+- [~] **WS push plane is still a skeleton.** IN PROGRESS (feat/ws-push-events).
+      `/ws` only sends hello + heartbeat + echo; the TUI gets status via HTTP
+      polling. "The core pushes (ambient updates, dashboard waking)" is
+      architecture, not yet behavior — the async half of the design carries no
+      real events. Wiring real push events (proposal.queued / proposal.resolved)
+      through the WS channel via a transport-agnostic core event bus.
 
-- [ ] **`.env` loads only from cwd.** `loadDotenv()` reads `.env` from the
-      current working directory; launching `saoirse-daemon` from elsewhere
-      silently loads no `.env` and falls back to defaults — a quiet
-      misconfiguration vector for an always-on service. Resolve `.env` relative
-      to the daemon's package root (or log loudly when no `.env` was found).
+- [x] **`.env` loads only from cwd.** DONE (787f350) — `loadDotenv()` now
+      resolves `.env` from the package root (via `import.meta.url`) regardless of
+      cwd, and logs loudly to stderr when no `.env` is found.
 
 ## Capabilities (the shelf is bare — only `clock` is committed)
 
