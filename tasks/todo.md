@@ -54,8 +54,9 @@ build those first, then individual skills are cheap. Ordered by build sequence.
 - [x] **Web search** — DONE (d9d161c) — `skills/websearch` over self-hosted
       SearXNG (`SEARXNG_URL`), offered to the model as a tool. Her first
       read-the-world capability.
-- [ ] **Web fetch + read** — search returns links; she must read them. Skill →
-      fetch + Readability/trafilatura extraction.
+- [x] **Web fetch + read** — DONE (5f9ae42) — `skills/webfetch` fetches an
+      http/https URL and returns readable text via a zero-dep extractor
+      (`extract.mjs`). Pairs with websearch. No config needed.
 - [ ] **Browser automation** — JS-heavy sites, logins, multi-step actions. Skill
       → Playwright headless. *Higher blast radius* (acts as the user) — needs P1.
 
