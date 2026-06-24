@@ -36,11 +36,16 @@ build those first, then individual skills are cheap. Ordered by build sequence.
 
 ### Primitives (foundational — unblock whole tiers)
 
-- [ ] **P1 — Skill credential / permission model.** `skill-runner.ts` strips the
-      daemon's secrets from every skill (correct), so there is NO sanctioned way
-      for a skill to authenticate. Blocks all of Tier B/C/D below. This is
-      GOVERNANCE.md Open Question 1. **Design drafted:**
-      [docs/design/skill-permissions.md](../docs/design/skill-permissions.md).
+- [~] **P1 — Skill credential / permission model.** Phase 1 DONE (9fe41de) —
+      manifest `permissions` block (secrets/env/net/fs/exec, default-deny);
+      env-prefix secret store (`SAOIRSE_SECRET_*`) captured + scrubbed at boot
+      and injected per-declaration; fs/exec sandboxed via Node permissions;
+      `/status` audits granted names + scopes. **Tier B/C/D are now unblocked.**
+      Remaining phases (deferred, per
+      [docs/design/skill-permissions.md](../docs/design/skill-permissions.md)):
+      Phase 2 = `net` egress enforcement (generalize the webfetch SSRF guard);
+      Phase 3 = per-invocation confirmation for high-blast-radius skills (on the
+      WS channel).
 
 - [ ] **P2 — Outbound channel + scheduler (proactivity).** She is purely
       reactive and the WS push plane is a skeleton, so she cannot initiate:
