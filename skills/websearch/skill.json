@@ -1,0 +1,20 @@
+{
+  "name": "websearch",
+  "description": "Search the web via a self-hosted SearXNG instance. Use this whenever the user asks about current events, recent news, facts past your training cutoff, live prices, sports scores, or anything you are unsure about. Prefer this over guessing — it returns real, up-to-date results.",
+  "entry": "run.mjs",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "The search query to send to SearXNG."
+      },
+      "count": {
+        "type": "integer",
+        "description": "Maximum number of results to return (default 5, max 10)."
+      }
+    },
+    "required": ["query"]
+  },
+  "timeoutMs": 15000
+}

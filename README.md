@@ -198,7 +198,14 @@ is loaded and offered to the model as an OpenAI tool; when the model calls one,
 the entry script runs as a short-lived subprocess (args as JSON on stdin,
 stdout returned to the model), bounded by a timeout and a capped round count. A
 broken manifest is reported and skipped — one bad skill never takes the daemon
-down. The manifest contract a built artifact must satisfy:
+down.
+
+Two skills ship committed in the repo:
+
+- **`clock`** — returns the current date and time (ISO/UTC, local, and the host timezone); no config required.
+- **`websearch`** — issues a web search via a self-hosted [SearXNG](https://searxng.github.io/searxng/) instance and returns JSON results. Requires a reachable SearXNG at `SEARXNG_URL` (see `.env.example`) with the JSON API enabled. Independent of `MODEL_ENDPOINT`.
+
+The manifest contract a built artifact must satisfy:
 
 ```json
 {

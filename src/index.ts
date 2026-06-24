@@ -128,9 +128,13 @@ async function main(): Promise<void> {
   for (const problem of skillReport.errors) {
     console.warn(`[saoirse] skill skipped: ${problem}`);
   }
+  // SEARXNG_URL is non-secret endpoint config a committed skill needs; granting
+  // one named key is the minimal, deliberate passthrough (the general per-skill
+  // permission model is the deferred Primitive 1 in docs/design/skill-permissions.md
+  // — do NOT implement that here).
   const skillKit: SkillKit = {
     skills: skillReport.skills,
-    runner: new ProcessSkillRunner(),
+    runner: new ProcessSkillRunner({ allowEnv: ['SEARXNG_URL'] }),
   };
 
   // Tier-0 Engram evaluator: the pin in package.json is the single source of
