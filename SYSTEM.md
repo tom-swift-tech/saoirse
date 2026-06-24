@@ -74,6 +74,15 @@ Crossing a Tier 0 or Tier 1 boundary requires a written proposal placed in
 VECTOR-scored rationale. She STOPS and waits for an approval token. There is no
 code path that crosses a gate without one. This is enforced, not honored.
 
+### Placing a new capability
+
+How a *new* capability (plugin, skill, channel, fabric, model backend) is placed
+into these tiers — the decision procedure, the reusable seam template, and the
+open design questions the next wave will force — is its own document:
+[docs/GOVERNANCE.md](./docs/GOVERNANCE.md). Rigor is proportional: the gate lands
+only where a mistake is both consequential and silent; a thin channel earns
+contract discipline, not Tier ceremony.
+
 ## Channels
 
 North-facing (humans + their devices): HTTP for turn-based request/response,

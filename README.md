@@ -5,6 +5,7 @@ multiple operational channels (mobile, web, CLI, TUI, voice).
 
 - **Identity & governance:** see [SYSTEM.md](./SYSTEM.md)
 - **Architecture:** see [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
+- **Placing a new capability:** see [docs/GOVERNANCE.md](./docs/GOVERNANCE.md)
 
 ## Status
 
