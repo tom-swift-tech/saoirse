@@ -10,6 +10,7 @@ import {
   toToolDefinition,
   validateSkillDir,
 } from '../src/core/skills.js';
+import { DENY_ALL_PERMISSIONS } from '../src/core/skill-permissions.js';
 
 let skillsDir: string;
 
@@ -120,6 +121,51 @@ describe('toToolDefinition', () => {
       description: 'tell the current time',
       parameters: VALID.parameters,
     });
+  });
+});
+
+describe('loadSkills — permissions field', () => {
+  it('carries a parsed grant when the manifest has a valid permissions block', async () => {
+    const manifest = {
+      ...VALID,
+      permissions: {
+        secrets: ['GITHUB_TOKEN'],
+        env: ['CI'],
+        net: ['api.github.com'],
+        fs: { read: ['/data'], write: ['/tmp/out'] },
+        exec: true,
+      },
+    };
+    await writeSkill('clock', manifest);
+    const { skills, errors } = await loadSkills(skillsDir);
+    expect(errors).toEqual([]);
+    expect(skills).toHaveLength(1);
+    const { permissions } = skills[0];
+    expect(permissions.secrets).toEqual(['GITHUB_TOKEN']);
+    expect(permissions.env).toEqual(['CI']);
+    expect(permissions.net).toEqual(['api.github.com']);
+    expect(permissions.fs.read).toEqual(['/data']);
+    expect(permissions.fs.write).toEqual(['/tmp/out']);
+    expect(permissions.exec).toBe(true);
+  });
+
+  it('carries DENY_ALL when the manifest has no permissions block', async () => {
+    await writeSkill('clock', VALID);
+    const { skills, errors } = await loadSkills(skillsDir);
+    expect(errors).toEqual([]);
+    const { permissions } = skills[0];
+    expect(permissions).toEqual(DENY_ALL_PERMISSIONS);
+  });
+
+  it.each([
+    ['secrets not an array', { permissions: { secrets: 'bad' } }],
+    ['exec not a boolean', { permissions: { exec: 'yes' } }],
+    ['unknown top-level permission key', { permissions: { unknown: true } }],
+  ])('skips and reports malformed permissions: %s', async (_label, extra) => {
+    await writeSkill('clock', { ...VALID, ...extra });
+    const { skills, errors } = await loadSkills(skillsDir);
+    expect(skills).toEqual([]);
+    expect(errors).toHaveLength(1);
   });
 });
 

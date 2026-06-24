@@ -10,7 +10,14 @@
 //     "description": "fetch the weather",  // shown to the model
 //     "parameters":  { JSON Schema },      // OpenAI tool-call parameters (optional)
 //     "entry":       "run.mjs",            // Node script, relative, inside the dir
-//     "timeoutMs":   30000                 // optional per-skill run budget
+//     "timeoutMs":   30000,                // optional per-skill run budget
+//     "permissions": {                     // optional — absent ⇒ default-deny
+//       "secrets": ["GITHUB_TOKEN"],       // logical secret names to inject
+//       "env":     ["CI"],                 // non-secret env pass-through
+//       "net":     ["api.github.com"],     // egress allowlist (Phase 1: declared, not enforced)
+//       "fs":      { "read": ["/data"] },  // fs scopes beyond skill dir + temp
+//       "exec":    true                    // may spawn child processes?
+//     }
 //   }
 //
 // The loader runs once at daemon start ("loads on next start" — the running
@@ -24,6 +31,8 @@ import { join } from 'node:path';
 import { resolveInside } from './sandbox.js';
 import { safeToolName } from './tool-builder.js';
 import type { ToolDefinition } from './model-gateway.js';
+import { parsePermissions } from './skill-permissions.js';
+import type { SkillPermissions } from './skill-permissions.js';
 
 export const MANIFEST_FILENAME = 'skill.json';
 
@@ -41,6 +50,11 @@ export interface LoadedSkill {
   entry: string;
   /** Per-run budget, ms. */
   timeoutMs?: number;
+  /**
+   * What the skill is allowed to touch. Always present — DENY_ALL when the
+   * manifest declares no `permissions` block (backward-compatible default-deny).
+   */
+  permissions: SkillPermissions;
 }
 
 export interface SkillLoadReport {
@@ -94,7 +108,7 @@ async function loadSkill(dir: string, dirName: string): Promise<LoadedSkill> {
     throw new Error(`${MANIFEST_FILENAME} is not valid JSON`);
   }
 
-  const { name, description, entry, parameters, timeoutMs } = manifest;
+  const { name, description, entry, parameters, timeoutMs, permissions: rawPermissions } = manifest;
   if (typeof name !== 'string' || safeToolName(name) !== dirName) {
     throw new Error(
       `manifest "name" (${JSON.stringify(name)}) must match the directory name "${dirName}"`,
@@ -120,6 +134,10 @@ async function loadSkill(dir: string, dirName: string): Promise<LoadedSkill> {
     throw new Error('manifest "parameters" must be a JSON Schema object');
   }
 
+  // Throws on a malformed permissions block — caught by the loadSkills loop and
+  // reported there, exactly like any other bad-manifest field.
+  const parsedPermissions = parsePermissions(rawPermissions);
+
   return {
     name,
     description,
@@ -129,6 +147,7 @@ async function loadSkill(dir: string, dirName: string): Promise<LoadedSkill> {
     dir,
     entry: entryAbs,
     timeoutMs: typeof timeoutMs === 'number' ? timeoutMs : undefined,
+    permissions: parsedPermissions,
   };
 }
 

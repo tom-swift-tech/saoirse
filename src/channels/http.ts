@@ -34,10 +34,28 @@ import {
 // subscribe. The channel knows nothing about how events are delivered onward.
 import type { EventSink } from '../core/events.js';
 
+/** Per-skill grant summary emitted by /status — names and flags only, never values. */
+export interface SkillPermissionAudit {
+  name: string;
+  /** Logical secret names declared by the skill (SAOIRSE_SECRET_<NAME> bare names). */
+  secrets: string[];
+  /** Egress host allowlist declared by the skill (Phase 1: declared, not yet enforced). */
+  net: string[];
+  /** Filesystem scopes granted to the skill beyond its own dir + temp. */
+  fs: { read: string[]; write: string[] };
+  /** Whether the skill may spawn child processes. */
+  exec: boolean;
+}
+
 export interface StatusResponse {
   model: { name: string; endpoint: string; reachable: boolean };
   /** Committed skills loaded at daemon start (Tier-1 capabilities live this run). */
-  skills: { count: number; names: string[] };
+  skills: {
+    count: number;
+    names: string[];
+    /** Grants audit: only skills with any non-default grant are included. */
+    permissions: SkillPermissionAudit[];
+  };
   version: string;
   /** Embedder health: mode + reachability. reachable is null when mode is not 'ollama'. */
   embeddings: { mode: string; reachable: boolean | null };

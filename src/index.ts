@@ -12,6 +12,7 @@ import { readFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { loadDotenv } from './load-env.js';
+import { captureSecretStore } from './core/secret-store.js';
 import { loadConfig } from './config.js';
 import { createEngram } from './core/engram-factory.js';
 import { EngramMemory } from './core/memory.js';
@@ -27,6 +28,7 @@ import {
   type SkillKit,
   type ToolKit,
 } from './core/saoirse.js';
+import { hasGrants } from './core/skill-permissions.js';
 import { parseEngramPin } from './proposals.js';
 import { createRouter } from './channels/http.js';
 import { attachWebSocket } from './channels/ws.js';
@@ -92,6 +94,16 @@ async function probeEmbeddingsReachable(baseUrl: string): Promise<boolean> {
 async function main(): Promise<void> {
   // Load .env from the working directory first; shell env still wins.
   loadDotenv();
+  // Capture SAOIRSE_SECRET_* BEFORE loadConfig() or anything else that might
+  // spawn a process or inherit env. captureSecretStore scrubs the matched keys
+  // from process.env in place — the daemon process never holds live secret
+  // values after this point. Ordering matters: loadDotenv must precede this so
+  // .env secrets are visible, and this must precede everything else so nothing
+  // can inherit them.
+  const secretStore = captureSecretStore();
+  console.log(
+    `[saoirse] secrets: ${secretStore.names().length} loaded (SAOIRSE_SECRET_*)`,
+  );
   const config = loadConfig();
 
   if (!config.token) {
@@ -134,7 +146,7 @@ async function main(): Promise<void> {
   // — do NOT implement that here).
   const skillKit: SkillKit = {
     skills: skillReport.skills,
-    runner: new ProcessSkillRunner({ allowEnv: ['SEARXNG_URL'] }),
+    runner: new ProcessSkillRunner({ allowEnv: ['SEARXNG_URL'], secretStore }),
   };
 
   // Tier-0 Engram evaluator: the pin in package.json is the single source of
@@ -210,6 +222,19 @@ async function main(): Promise<void> {
             ? probeEmbeddingsReachable(config.engramEmbeddingsUrl)
             : Promise.resolve(null),
         ]);
+        // Per-skill permissions audit: secret NAMES only (never values), plus
+        // the declared net/fs/exec grants. Only skills with any grant are
+        // included — ungranted skills are uninteresting and omitting them keeps
+        // the payload small.
+        const permissions = skillKit.skills
+          .filter((s) => hasGrants(s.permissions))
+          .map((s) => ({
+            name: s.name,
+            secrets: s.permissions.secrets,
+            net: s.permissions.net,
+            fs: s.permissions.fs,
+            exec: s.permissions.exec,
+          }));
         return {
           model: {
             name: config.modelName,
@@ -219,6 +244,7 @@ async function main(): Promise<void> {
           skills: {
             count: skillKit.skills.length,
             names: core.skillNames,
+            permissions,
           },
           version,
           embeddings: {
