@@ -147,19 +147,37 @@ until the proxy lands.
 
 ## Phasing
 
-1. **Phase 1 — secrets + env (hard) + full manifest schema + governance.**
-   Unblocks email/calendar/API skills immediately. `net`/`fs` accepted and shown
-   for review but enforced only as far as noted. Highest value, lowest cost.
-2. **Phase 2 — fs + exec enforcement** via Node's permission model (gate on a
-   spike that confirms the flags behave under the pinned Node 20 + native ABI).
-3. **Phase 3 — network egress proxy** enforcing the `net` allowlist; flip the
-   banner from `declared` to `enforced`.
+1. **Phase 1 — secrets + env + fs + exec (all hard) + full manifest schema +
+   governance.** Unblocks email/calendar/API skills immediately. fs/exec are
+   included here (not deferred) because the spike confirmed Node's permission
+   model enforces them on the pinned Node 20. `net` is accepted and shown for
+   review but enforced only as a declaration this phase.
+2. **Phase 2 — network egress enforcement** by generalizing the `webfetch`
+   SSRF guard (`skills/webfetch/ssrf-guard.mjs`) into a per-skill `net` allowlist
+   / forward proxy; flip the banner from `declared` to `enforced`.
+3. **Phase 3 (deferred) — per-invocation confirmation** ("Tier 1.5") for the
+   first high-blast-radius skill (send-email, infra, code-exec): a runtime pause
+   that pushes a confirmation event over the WS channel and waits for a token.
 
-## Open questions
+## Decisions (locked 2026-06-24)
 
-1. **Store form** — env-prefix (proposed) vs a dedicated gitignored vault file.
-   Env-prefix wins for simplicity; revisit if secret count grows.
-2. **Node permission model viability** — RESOLVED by spike (Node 20.20.2,
+1. **Store form → env-prefix, scrubbed at boot.** `SAOIRSE_SECRET_<NAME>` is read
+   from the daemon env at boot, captured into a private in-memory map, then
+   **deleted from `process.env`** so secrets don't linger in the live process env
+   or get inherited by accident. A manifest's `secrets:["X"]` injects the bare
+   `X` into that one skill's subprocess. A vault file is revisited only if secret
+   count / rotation tooling grows.
+2. **Grant granularity → per-skill manifest grants now.** Approval-at-promotion
+   grants the manifest's declared scopes; every call uses them silently. Per-
+   invocation confirmation is deferred to Phase 3 (above), built when the first
+   high-blast-radius skill lands — reusing the WS push channel for the prompt.
+3. **Auditability → `/status` lists granted secret *names* (never values) and
+   scopes per skill.** Rotation requires a restart (consistent with the
+   no-hot-reload rule; promotions and re-pins already work this way).
+
+## Resolved by spike
+
+1. **Node permission model viability** — RESOLVED by spike (Node 20.20.2,
    `--experimental-permission`). Phase 2 (fs + exec enforcement) is **viable**:
    - `--allow-fs-read=<path>` / `--allow-fs-write=<path>`: reads/writes outside
      the allowlisted paths fail with `ERR_ACCESS_DENIED`; inside paths succeed.
@@ -172,13 +190,7 @@ until the proxy lands.
      `spawn` fails `ERR_ACCESS_DENIED` unless `--allow-child-process` is passed —
      so `exec:false` is the natural default and `exec:true` opts in.
    - **Network is NOT covered** (no network flag in Node 20): an outbound connect
-     is attempted normally — confirming `net` enforcement needs the Phase 3 proxy,
-     not the permission model.
+     is attempted normally — confirming `net` enforcement needs the Phase 2
+     egress work (generalize the webfetch SSRF guard), not the permission model.
    Caveat: it prints an `ExperimentalWarning` (cosmetic) and is experimental, so
    pin behavior to the Node-20 version and re-verify on any Node bump.
-3. **Per-call vs per-skill grants** — is a manifest-level grant sufficient, or do
-   high-blast-radius skills (infra, code-exec) need per-invocation confirmation
-   (a Tier-1.5 "ask the human each time")? Likely yes for Tier C/D.
-4. **Secret rotation / visibility** — should `/status` report *which* secrets a
-   skill holds (names only) for auditability, and how are rotations picked up
-   (restart, per the no-hot-reload rule)?
