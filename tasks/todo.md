@@ -51,8 +51,9 @@ build those first, then individual skills are cheap. Ordered by build sequence.
 
 ### Tier A — read the world (no primitive needed; build now)
 
-- [ ] **Web search** — without it she's frozen at training cutoff + memory. The
-      #1 gap. Skill → self-hosted **SearXNG** (not a paid search API).
+- [x] **Web search** — DONE (d9d161c) — `skills/websearch` over self-hosted
+      SearXNG (`SEARXNG_URL`), offered to the model as a tool. Her first
+      read-the-world capability.
 - [ ] **Web fetch + read** — search returns links; she must read them. Skill →
       fetch + Readability/trafilatura extraction.
 - [ ] **Browser automation** — JS-heavy sites, logins, multi-step actions. Skill
