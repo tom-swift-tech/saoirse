@@ -47,12 +47,14 @@ build those first, then individual skills are cheap. Ordered by build sequence.
       Phase 3 = per-invocation confirmation for high-blast-radius skills (on the
       WS channel).
 
-- [ ] **P2 — Outbound channel + scheduler (proactivity).** She is purely
-      reactive and the WS push plane is a skeleton, so she cannot initiate:
-      no reminders, no notifications, no "I noticed X". For an *always-on*
-      assistant this is the biggest single missing capability. (Overlaps the
-      run-model gaps above: WS push + no scheduler.) Self-hosted notify target:
-      ntfy or Matrix, not Twilio.
+- [~] **P2 — Outbound channel + scheduler (proactivity).** Phase 1 DONE
+      (54549a1) — a persistent job store + 60s scheduler fires one-shot (`at`)
+      and recurring (`cron`) jobs; actions `notify` (literal) or `prompt` (run
+      through the core); delivered via a Notifier seam (ntfy first, `NTFY_URL`;
+      `NullNotifier` fallback). Token-gated `/jobs` CRUD. **She can now
+      initiate.** Later: recurring digests once authenticated skills exist, WS
+      `job.fired` events, and the link to P1 Phase 3 confirmation for
+      high-blast-radius scheduled actions. Matrix notifier is a future seam impl.
 
 ### Tier A — read the world (no primitive needed; build now)
 
